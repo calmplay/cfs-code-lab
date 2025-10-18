@@ -3,7 +3,7 @@
 # @Author  : cfushn
 # @Comments: 
 # @Software: PyCharm
-
+import os
 import signal
 
 # 两个自定义信号量, 供用户处理事件, 通过SIGUSR1 和 SIGUSR2 信号操作其值
@@ -25,6 +25,7 @@ def register_signal_handler():
     """注册用户自定义signal_handler,在接收信号时触发触发对应信号量的自定义操作"""
     signal.signal(signal.SIGUSR1, _signal_handler)
     signal.signal(signal.SIGUSR2, _signal_handler)
+    print(f"================= Current process ID: {os.getpid()} =================")
 
 
 def get_s1():

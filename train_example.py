@@ -3,3 +3,9 @@
 # @Author  : cfushn
 # @Comments: 
 # @Software: PyCharm
+
+
+a =[]
+b = None
+if a:
+    print("[] is False")

@@ -3,6 +3,10 @@ import torch
 import torch.nn as nn
 
 cfg = {
+    # 特征提取层的拼接, 数字表示一个卷积块(Conv2d+BN+ReLU)
+    # 数字表示卷积核的数量
+    # M表示池化层
+    # 最后一个卷积块后接一个全连接层
     'VGG8': [64, 'M', 128, 'M', 256, 'M', 512, 'M', 512, 'M'],
     'VGG11': [64, 'M', 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
     'VGG13': [64, 64, 'M', 128, 128, 'M', 256, 256, 'M', 512, 512, 'M', 512, 512, 'M'],
@@ -15,10 +19,27 @@ cfg = {
 NC = 3
 
 
+def _make_layers(cfg):
+    layers = []
+    in_channels = NC
+    for x in cfg:
+        if x == 'M':
+            layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
+        else:
+            # 只指定通道数,输入输出通道数不变
+            # 核大小固定为3,相应地,padding固定1
+            layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
+                       nn.BatchNorm2d(x),
+                       nn.ReLU(inplace=True)]
+            in_channels = x
+    layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
+    return nn.Sequential(*layers)
+
+
 class VGG(nn.Module):
     def __init__(self, vgg_name):
         super(VGG, self).__init__()
-        self.features = self._make_layers(cfg[vgg_name])
+        self.features = _make_layers(cfg[vgg_name])
 
         self.fc = nn.Sequential(
                 nn.Linear(4 * 4 * 128, 512),
@@ -38,20 +59,6 @@ class VGG(nn.Module):
         out = out.view(out.size(0), -1)
         out = self.fc(out)
         return out
-
-    def _make_layers(self, cfg):
-        layers = []
-        in_channels = NC
-        for x in cfg:
-            if x == 'M':
-                layers += [nn.MaxPool2d(kernel_size=2, stride=2)]
-            else:
-                layers += [nn.Conv2d(in_channels, x, kernel_size=3, padding=1),
-                           nn.BatchNorm2d(x),
-                           nn.ReLU(inplace=True)]
-                in_channels = x
-        layers += [nn.AvgPool2d(kernel_size=1, stride=1)]
-        return nn.Sequential(*layers)
 
 
 def vgg8():
