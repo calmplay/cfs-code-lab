@@ -22,7 +22,7 @@ import random
 
 def main():
     parser = argparse.ArgumentParser(description="验证 H5 文件的 images/labels")
-    parser.add_argument("--input", "-i", required=True, help="h5 文件路径")
+    parser.add_argument("--input",default="/home/cy/datasets/CCGM/SteeringAngle_256x256.h5", help="h5 文件路径")
     parser.add_argument("--num", "-n", type=int, default=10, help="抽取数量 (默认10)")
     args = parser.parse_args()
 

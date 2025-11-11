@@ -347,16 +347,20 @@ if __name__ == "__main__":
 
     # 使用示例:
     # # 基本用法：打印树
-    # python h5inspect.py your_file.h5
+    # python h5_inspect.py your_file.h5
+    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/facial/MixedFace/MixedFace_202510201043.h5
+    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/UTKFace_64x64.h5
+    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/ShapeNet_function_v1_16_64x64_900.h5
+    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/raw100_new_128x128.h5
     #
     # # 限制深度为2层
-    # python h5inspect.py your_file.h5 -d 2
+    # python h5_inspect.py your_file.h5 -d 2
     #
     # # 打印属性（最多每个对象 10 个键）
-    # python h5inspect.py your_file.h5 -a --attr-max 10
+    # python h5_inspect.py your_file.h5 -a --attr-max 10
     #
     # # 输出 JSON（结构化）
-    # python h5inspect.py your_file.h5 -j > structure.json
+    # python h5_inspect.py your_file.h5 -j > structure.json
     #
     # # 显示数据集的少量采样（最多 8 个元素）
-    # python h5inspect.py your_file.h5 --sample 8
+    # python h5_inspect.py your_file.h5 --sample 8
