@@ -75,6 +75,10 @@ def extract_one_lz4(lz4_path: str, output_root: str):
     logging.info(f"完成解压：{lz4_path}")
 
 def process_input(input_path: str):
+
+    if input_path != "/":
+        input_path = input_path.rstrip("/")
+
     output_root = f"{input_path}_extracted"
     os.makedirs(output_root, exist_ok=True)
 
@@ -95,6 +99,6 @@ def process_input(input_path: str):
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:
-        print("用法: python open_lz4.py <包含 .lz4 的目录 或 单个 .lz4 文件>")
+        print("用法: python trans_lz4_unzip.py <包含 .lz4 的目录 或 单个 .lz4 文件>")
         sys.exit(1)
     process_input(sys.argv[1])

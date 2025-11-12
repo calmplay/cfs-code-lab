@@ -1,12 +1,21 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-import os
-import sys
-import stat
-import time
-import lz4.frame
+
 import logging
+import os
+import stat
+import sys
+
+import lz4.frame
 from tqdm import tqdm
+
+"""
+批量打包, 打包目标父文件夹下的多个子文件夹 -> 父文件夹_trans/子文件夹1.lz, 子文件夹2.lz, ...
+不支持递归
+不支持打包单个
+
+有其他需求另改代码即可
+"""
 
 # ===== 打包格式（顺序写入 LZ4 流）=====
 # [magic: 7 bytes = b"LZ4DIR1"]
@@ -82,6 +91,8 @@ def compress_one_subfolder(subfolder_path: str, output_lz4_path: str, compressio
     logging.info(f"完成：{output_lz4_path}")
 
 def process_parent(input_parent: str, compression_level: int = 0):
+    if input_parent != "/":
+        input_parent = input_parent.rstrip("/")
     output_parent = f"{input_parent}_trans"
     os.makedirs(output_parent, exist_ok=True)
 
@@ -93,7 +104,7 @@ def process_parent(input_parent: str, compression_level: int = 0):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2 or len(sys.argv) > 3:
-        print("用法: python trans_lz4.py <父文件夹路径> [压缩等级(0~16, 可选，默认0)]")
+        print("用法: python trans_lz4_zip.py <父文件夹路径> [压缩等级(0~16, 可选，默认0)]")
         sys.exit(1)
     parent = sys.argv[1]
     level = int(sys.argv[2]) if len(sys.argv) == 3 else 0

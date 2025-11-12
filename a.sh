@@ -1,0 +1,11 @@
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W_test/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
+python c00_utils/zip_unzip/trans_lz4.py /home/cy/datasets/facial/temp/crop/300W/
