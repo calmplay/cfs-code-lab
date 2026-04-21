@@ -11,6 +11,15 @@
 - 随机抽取 10 张 images
 - 打印 shape 和对应的 label
 - 可视化 preview
+
+用法:
+  cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
+  python h5_preview.py --input /home/data/OmniFace_64x64_20260421.h5 --num 10
+  python h5_preview.py --input /home/data/OmniFace_202602042244.h5 --num 10
+  python h5_preview.py --input /home/data/OmniShape1k_18000a_64x64_20260421.h5 --num 10
+  python h5_preview.py --input /home/data/OmniShape1k_18000a_128x128_20251204.h5 --num 10
+
+  想显示图片预览,得在上面改默认,直接在pycharm里点运行
 """
 
 import argparse
@@ -22,13 +31,16 @@ import random
 
 def main():
     parser = argparse.ArgumentParser(description="验证 H5 文件的 images/labels")
-    parser.add_argument("--input",default="/home/cy/datasets/CCGM/SteeringAngle_256x256.h5", help="h5 文件路径")
+    parser.add_argument("--input",default="/home/data/OmniShape1k_18000a_128x128_20251204.h5", help="h5 文件路径")
     parser.add_argument("--num", "-n", type=int, default=10, help="抽取数量 (默认10)")
     args = parser.parse_args()
 
     with h5py.File(args.input, "r") as f:
         images = f["images"]   # (N,3,H,W), RGB-CHW
-        labels = f["labels"]   # (N,)
+        labels = f["model_id"]   # (N,)
+        model_ids = f["meta/model_id"]
+        model_names = f["meta/model_name"]
+        mmm = { model_ids[i]:model_names[i] for i in range(len(model_ids))}
 
         N = images.shape[0]
         idxs = random.sample(range(N), args.num)
@@ -47,7 +59,8 @@ def main():
 
             plt.subplot(2, (args.num + 1)//2, i+1)
             plt.imshow(img_hwc)
-            plt.title(f"idx {idx}\nlabel {label:.2f}")
+            # plt.title(f"idx {idx}\nlabel {label:.2f}")
+            plt.title(f"\n{mmm[label]}")
             plt.axis("off")
 
         plt.tight_layout()
@@ -56,7 +69,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    """
-    python h5_preview.py --input /path/to/output_sr.h5 --num 10
-    """

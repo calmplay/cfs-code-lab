@@ -13,6 +13,27 @@ HDF5 结构分析脚本
 - 显示属性（可选）
 - 识别软链接 / 外部链接；统计硬链接计数
 - 可选 JSON 输出
+
+用法:
+  cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/facial/OmniFace/OmniFace_202601191951.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniFace_202602042244.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniShape1k_18000a_128x128_20251204.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/UTKFace_64x64.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/ShapeNet_function_v1_16_64x64_900.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/raw100_new_128x128.h5
+
+  # 限制深度为2层
+  python h5_inspect.py your_file.h5 -d 2
+
+  # 打印属性（最多每个对象 10 个键）
+  python h5_inspect.py your_file.h5 -a --attr-max 10
+
+  # 输出 JSON（结构化）
+  python h5_inspect.py your_file.h5 -j > structure.json
+
+  # 显示数据集的少量采样（最多 8 个元素）
+  python h5_inspect.py your_file.h5 --sample 8
 """
 
 import argparse
@@ -344,23 +365,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-    # 使用示例:
-    # # 基本用法：打印树
-    # python h5_inspect.py your_file.h5
-    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/facial/MixedFace/MixedFace_202510201043.h5
-    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/UTKFace_64x64.h5
-    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/ShapeNet_function_v1_16_64x64_900.h5
-    # python /home/cy/nuist-lab/cfs-code-lab/c00-utils/h5_inspect.py /home/cy/datasets/CCGM/raw100_new_128x128.h5
-    #
-    # # 限制深度为2层
-    # python h5_inspect.py your_file.h5 -d 2
-    #
-    # # 打印属性（最多每个对象 10 个键）
-    # python h5_inspect.py your_file.h5 -a --attr-max 10
-    #
-    # # 输出 JSON（结构化）
-    # python h5_inspect.py your_file.h5 -j > structure.json
-    #
-    # # 显示数据集的少量采样（最多 8 个元素）
-    # python h5_inspect.py your_file.h5 --sample 8
