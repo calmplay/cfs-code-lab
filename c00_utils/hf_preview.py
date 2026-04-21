@@ -25,7 +25,6 @@ import sys
 from collections import defaultdict
 from typing import List, Optional
 
-import numpy as np
 import matplotlib.pyplot as plt
 
 # 关闭 toolbar 和刻度
@@ -35,8 +34,8 @@ from datasets import load_dataset, Image as HFImage, Sequence, Value, ClassLabel
 
 def main():
     parser = argparse.ArgumentParser(description="HuggingFace 数据集预览工具",
-        formatter_class=argparse.RawDescriptionHelpFormatter,)
-    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace",
+                                     formatter_class=argparse.RawDescriptionHelpFormatter, )
+    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace_o",
                         help="数据集文件夹路径")
     parser.add_argument("--label-fields", type=str, default="id,age",
                         help="手动指定显示的标签字段 (逗号分隔, 默认自动选择)", )
@@ -206,21 +205,8 @@ def preview_dataset(
         sample = ds[idx]
         img = sample[img_field]
 
-        # 打印信息
-        info_parts = [f"样本 {i}: index={idx}"]
-        if hasattr(img, "size"):
-            info_parts.append(f"size={img.size[0]}x{img.size[1]}")
-        for lf in label_fields:
-            if lf in sample:
-                val = sample[lf]
-                feat = ds.features[lf]
-                info_parts.append(f"{lf}={format_label_value(val, feat)}")
-        print(" | ".join(info_parts))
-
-        # 显示图片 (转 numpy array, 避免 PyCharm SciView 渲染空白)
+        # 子网格
         plt.subplot(rows, cols, i + 1)
-        if hasattr(img, "size"):
-            img = np.array(img)
         plt.imshow(img)
 
         # title: 标签字段值
