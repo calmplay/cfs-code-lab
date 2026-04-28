@@ -16,37 +16,75 @@ H5 -> HuggingFace Datasets (Parquet 分片) 转换工具
 3. OmniShape:
    - uint8 CHW -> JPEG(quality=95 默认)
    - 进程池持久化, 只创建一次
-   - 使用“按样本数近似控 shard”替代逐元素估大小
+   - 使用"按样本数近似控 shard"替代逐元素估大小
 4. 其他样本列 / meta 列完整保留
 
+============================================
+Train/Val/Test 划分逻辑说明
+============================================
+
+OmniFace 划分逻辑:
+------------------
+来源: H5 文件中预定义的 train_indices 和 val_indices
+- train: 使用原始 train_indices
+- val: 从原始 val_indices 中取 1/3（下标 %3 == 0）
+- test: 从原始 val_indices 中取 2/3（下标 %3 == 1 或 2）
+- 确保同一组样本在不同运行时保持一致的划分
+
+OmniShape 划分逻辑:
+------------------
+来源: 转换时按 class（8个大类）动态计算
+- 首先按 class 分桶（8个大类）
+- 在每个 class 桶内，按 model_id 不重叠划分
+- val: 每个 class 取 1% 的 model_id（向下取整）
+- test: 每个 class 取 2% 的 model_id（向下取整）
+- train: 剩余的 model_id
+- 确保同一 model_id 的所有样本在同一个 split 中
+- 使用 seed=42 保证可复现性
+
+============================================
+
 示例:
-  cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
+cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
 
-  # OmniFace
-  python h5_to_hf_optimized.py -d omniface \
-      -i /home/data/OmniFace_202602042244.h5 \
-      -o /home/data/HF/OmniFace_o
+# OmniFace 转换
+# OmniFace512: 图像较大(512x512)，推荐 worker=16-24
+python h5_to_hf.py -d omniface \
+  -i /home/data/OmniFace_202602042244.h5 \
+  -o /home/data/HF/OmniFace512 \
+  -w 16
 
-  python h5_to_hf_optimized.py -d omniface \
-      -i /home/data/OmniFace_64x64_20260421.h5 \
-      -o /home/data/HF/OmniFace64_o
+# OmniFace64: 图像较小(64x64)，推荐 worker=8-16
+python h5_to_hf.py -d omniface \
+  -i /home/data/OmniFace64-V1_20260421.h5 \
+  -o /home/data/HF/OmniFace64 \
+  -w 12
 
-  # OmniShape
-  python h5_to_hf_optimized.py -d omnishape \
-      -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
-      -o /home/data/HF/OmniShape_o \
-      -w 32
+# OmniShape 转换（使用默认比例：1% val, 2% test）
+# OmniShape128: 推荐 worker=24-32
+python h5_to_hf.py -d omnishape \
+  -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
+  -o /home/data/HF/OmniShape128 \
+  -w 24
 
-  # OmniShape较慢, 可以先快速验证
-  python h5_to_hf_optimized.py -d omnishape \
-      -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
-      -o /home/data/HF/OmniShape_test \
-      -w 32 \
-      --max-samples 10000
+python h5_to_hf.py -d omnishape \
+  -i /home/data/OmniShape64-V1_20260421.h5 \
+  -o /home/data/HF/OmniShape64 \
+  -w 24
 
-  # 验证
-  python h5_to_hf_optimized.py -d omniface -i /home/data/OmniFace_64x64_20260421.h5 -o /home/data/HF/OmniFace64 --verify
-  python h5_to_hf_optimized.py -d omnishape -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 -o /home/data/HF/OmniShape --verify
+# 自定义比例示例,增加参数 --val-ratio 0.02 --test-ratio 0.03
+
+# 快速验证（只处理前 12800 个样本）
+# 快速测试推荐 worker=16
+python h5_to_hf.py -d omnishape \
+  -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
+  -o /home/data/HF/OmniShape128_test \
+  -w 16 \
+  --max-samples 12800
+
+# 验证
+python h5_to_hf.py -d omniface -i /home/data/OmniFace_64x64_20260421.h5 -o /home/data/HF/OmniFace64 --verify
+python h5_to_hf.py -d omnishape -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 -o /home/data/HF/OmniShape --verify
 """
 
 import argparse
@@ -460,12 +498,32 @@ def convert_omniface(
         n_total = images_ds.shape[0]
         print(f"  数据集大小: {n_total:,}")
 
-        train_idx = f["train_indices"][:]
-        val_idx = f["val_indices"][:]
-        print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}")
+        # 读取原始划分
+        train_idx_original = f["train_indices"][:]
+        val_idx_original = f["val_indices"][:]
+        print(f"  原始划分: train: {len(train_idx_original):,}, val: {len(val_idx_original):,}")
 
-        splits = {"train": train_idx, "val": val_idx}
+        # 重新划分 val_idx_original 为 val 和 test (1/3 给 val, 2/3 给 test)
+        # 使用下标 %3 取余来判断
+        val_idx = val_idx_original[np.arange(len(val_idx_original)) % 3 == 0]
+        test_idx = val_idx_original[np.arange(len(val_idx_original)) % 3 != 0]
+        train_idx = train_idx_original
+        print(
+            f"  重新划分: train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
+
+        splits = {"train": train_idx, "val": val_idx, "test": test_idx}
         splits_info = {}
+
+        # 保存划分信息
+        split_dict = {
+            "train": train_idx.tolist(),
+            "val": val_idx.tolist(),
+            "test": test_idx.tolist()
+        }
+        split_info_path = os.path.join(output_dir, "split_indices.json")
+        with open(split_info_path, "w") as f_split:
+            json.dump(split_dict, f_split)
+        print(f"  划分信息已保存: {split_info_path}")
 
         with ManagedEncoder(workers=workers if image_mode == "chw_uint8" else 1,
                             quality=jpeg_quality) as encoder:
@@ -571,25 +629,52 @@ OMNISHAPE_META_FIELDS = {
 
 def _split_omnishape_indices(
         f: h5py.File,
-        val_ratio: float = 0.05,
+        val_ratio: float = 0.01,
+        test_ratio: float = 0.02,
         seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """按 model_id 不重叠划分 train/val."""
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """按 class 分桶，桶内按 model_id 不重叠划分 train/val/test."""
     rng = np.random.RandomState(seed)
     all_model_ids = f["model_id"][:]
+    all_classes = f["class"][:]
 
+    # 获取每个 model_id 对应的 class
     unique_ids, first_indices = np.unique(all_model_ids, return_index=True)
     unique_ids = unique_ids[np.argsort(first_indices)]
-    rng.shuffle(unique_ids)
+    unique_classes = all_classes[first_indices]
 
-    n_val = max(1, int(len(unique_ids) * val_ratio))
-    val_model_ids = unique_ids[:n_val]
+    # 按 class 分桶
+    class_buckets = defaultdict(list)
+    for model_id, cls in zip(unique_ids, unique_classes):
+        class_buckets[cls].append(model_id)
+
+    # 在每个 class 桶内划分
+    val_model_ids = []
+    test_model_ids = []
+    train_model_ids = []
+
+    for cls in class_buckets:
+        bucket_model_ids = class_buckets[cls]
+        rng.shuffle(bucket_model_ids)
+
+        n_total = len(bucket_model_ids)
+        n_val = int(n_total * val_ratio)  # 向下取整
+        n_test = int(n_total * test_ratio)  # 向下取整
+
+        val_model_ids.extend(bucket_model_ids[:n_val])
+        test_model_ids.extend(bucket_model_ids[n_val:n_val + n_test])
+        train_model_ids.extend(bucket_model_ids[n_val + n_test:])
 
     # C 侧向量化 membership, 比 Python 字典/循环更快
     is_val = np.isin(all_model_ids, val_model_ids)
+    is_test = np.isin(all_model_ids, test_model_ids)
+    is_train = ~is_val & ~is_test
+
     val_indices = np.where(is_val)[0].astype(np.int32)
-    train_indices = np.where(~is_val)[0].astype(np.int32)
-    return train_indices, val_indices
+    test_indices = np.where(is_test)[0].astype(np.int32)
+    train_indices = np.where(is_train)[0].astype(np.int32)
+
+    return train_indices, val_indices, test_indices
 
 
 def build_omnishape_batch(
@@ -628,7 +713,7 @@ def save_omnishape_meta(f: h5py.File, output_dir: str):
     for field, cfg in OMNISHAPE_META_FIELDS.items():
         vals = f[f"meta/{field}"][:]
         field_lengths[field] = len(vals)
-        
+
     # 检查所有字段长度是否一致
     lengths = list(field_lengths.values())
     if len(set(lengths)) > 1:
@@ -663,7 +748,8 @@ def convert_omnishape(
         output_dir: str,
         max_shard_size_mb: int = 500,
         jpeg_quality: int = 95,
-        val_ratio: float = 0.05,
+        val_ratio: float = 0.01,
+        test_ratio: float = 0.02,
         seed: int = 42,
         workers: int = 16,
         max_samples: int = None,
@@ -688,31 +774,39 @@ def convert_omnishape(
             f"  images shape={images_ds.shape}, chunks={images_ds.chunks}, dtype={images_ds.dtype}")
         print(f"  JPEG quality={jpeg_quality}, workers={workers}")
 
-        print(f"  按 model_id 划分 train/val (val_ratio={val_ratio}, seed={seed})...")
-        train_idx, val_idx = _split_omnishape_indices(f, val_ratio, seed)
-        
+        print(
+            f"  按 class 分桶，桶内按 model_id 划分 train/val/test (val_ratio={val_ratio}, test_ratio={test_ratio}, seed={seed})...")
+        train_idx, val_idx, test_idx = _split_omnishape_indices(f, val_ratio, test_ratio, seed)
+
         # 限制最大样本数
         if max_samples is not None:
             print(f"  [限制样本数模式] 只处理前 {max_samples:,} 个样本")
             train_idx = train_idx[:max_samples]
             val_idx = val_idx[:max_samples]
-            print(f"  限制后 - train: {len(train_idx):,}, val: {len(val_idx):,}")
+            test_idx = test_idx[:max_samples]
+            print(
+                f"  限制后 - train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
         else:
-            print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}")
+            print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
 
         split_info = {
             "seed": seed,
             "val_ratio": val_ratio,
+            "test_ratio": test_ratio,
             "train_count": int(len(train_idx)),
             "val_count": int(len(val_idx)),
+            "test_count": int(len(test_idx)),
             "max_samples": max_samples,
+            "train_indices": train_idx.tolist(),
+            "val_indices": val_idx.tolist(),
+            "test_indices": test_idx.tolist(),
         }
         split_fpath = os.path.join(output_dir, "split_indices.json")
         with open(split_fpath, "w", encoding="utf-8") as sf:
             json.dump(split_info, sf, indent=2)
         print(f"  划分信息已保存: {split_fpath}")
 
-        splits = {"train": train_idx, "val": val_idx}
+        splits = {"train": train_idx, "val": val_idx, "test": test_idx}
         splits_info = {}
 
         h5_chunk0 = images_ds.chunks[0] if images_ds.chunks else 1365
@@ -869,8 +963,14 @@ def main():
     parser.add_argument(
         "--val-ratio",
         type=float,
-        default=0.05,
-        help="OmniShape val 集比例, 默认 0.05",
+        default=0.01,
+        help="OmniShape val 集比例, 默认 0.01",
+    )
+    parser.add_argument(
+        "--test-ratio",
+        type=float,
+        default=0.02,
+        help="OmniShape test 集比例, 默认 0.02",
     )
     parser.add_argument(
         "--seed",
@@ -918,6 +1018,7 @@ def main():
             max_shard_size_mb=args.shard_size,
             jpeg_quality=args.jpeg_quality,
             val_ratio=args.val_ratio,
+            test_ratio=args.test_ratio,
             seed=args.seed,
             workers=args.workers,
             max_samples=args.max_samples,

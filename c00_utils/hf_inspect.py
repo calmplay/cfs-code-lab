@@ -10,12 +10,19 @@ HuggingFace 数据集结构分析工具
 功能对标 h5_inspect.py, 但输入是 HF 数据集文件夹 (含多个 parquet 分片).
 
 用法:
-  cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
-  python hf_inspect.py /home/data/HF/OmniFace_o
-  python hf_inspect.py /home/data/HF/OmniShape
-  python hf_inspect.py /home/data/HF/OmniFace -j > structure.json
-  python hf_inspect.py /home/data/HF/OmniFace --sample 3
-  python hf_inspect.py /home/data/HF/OmniFace --split train
+cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
+python hf_inspect.py /home/data/HF/OmniFace512
+python hf_inspect.py /home/data/HF/OmniFace512 -j > structure.json
+python hf_inspect.py /home/data/HF/OmniFace512 --sample 3
+python hf_inspect.py /home/data/HF/OmniFace512 --split test
+python hf_inspect.py /home/data/HF/OmniFace64
+python hf_inspect.py /home/data/HF/OmniShape128
+python hf_inspect.py /home/data/HF/OmniShape64
+python hf_inspect.py /home/data/HF/OmniShape128_test
+
+python hf_inspect.py /home/cy/datasets/imagenet-1k
+
+
 """
 
 import argparse
@@ -107,13 +114,13 @@ def check_meta_parquet(dataset_dir: str) -> Optional[str]:
 def _format_size(size_bytes: int) -> str:
     """格式化文件大小."""
     if size_bytes >= 1e12:
-        return f"{size_bytes/1e12:.2f} TB"
+        return f"{size_bytes / 1e12:.2f} TB"
     elif size_bytes >= 1e9:
-        return f"{size_bytes/1e9:.2f} GB"
+        return f"{size_bytes / 1e9:.2f} GB"
     elif size_bytes >= 1e6:
-        return f"{size_bytes/1e6:.2f} MB"
+        return f"{size_bytes / 1e6:.2f} MB"
     else:
-        return f"{size_bytes/1e3:.2f} KB"
+        return f"{size_bytes / 1e3:.2f} KB"
 
 
 def _feature_type_str(feature) -> str:
@@ -136,8 +143,8 @@ def _feature_type_str(feature) -> str:
 
 
 def analyze_split(
-    files: List[str],
-    sample_n: int = 3,
+        files: List[str],
+        sample_n: int = 3,
 ) -> Dict[str, Any]:
     """
     加载一个 split 并分析所有字段.
@@ -194,14 +201,22 @@ def _format_sample(values: Any, feature) -> Any:
             return [f"PIL Image {v.size[0]}x{v.size[1]} ({v.mode})" for v in values]
         return ["<PIL Image>"] * len(values)
     elif isinstance(feature, Sequence):
-        # Sequence: 显示为 list
+        # Sequence: 显示为 list，浮点数保留2位小数
         result = []
         for v in values:
             if isinstance(v, (list, tuple)):
-                if len(v) > 5:
-                    result.append(list(v[:5]) + ["..."])
+                formatted = []
+                for item in v:
+                    if isinstance(item, float) or (
+                            hasattr(item, 'item') and isinstance(item.item(), float)):
+                        val = item.item() if hasattr(item, 'item') else item
+                        formatted.append(round(val, 2))
+                    else:
+                        formatted.append(item)
+                if len(formatted) > 5:
+                    result.append(formatted[:5] + ["..."])
                 else:
-                    result.append(list(v))
+                    result.append(formatted)
             else:
                 result.append(v)
         return result
@@ -221,13 +236,15 @@ def _format_sample(values: Any, feature) -> Any:
         except Exception:
             return list(values)
     else:
-        # 数值: 直接显示
+        # 数值: 格式化显示，浮点数保留2位小数
         vals = list(values)
-        # numpy 标量转 python 原生类型
         result = []
         for v in vals:
             if hasattr(v, "item"):
-                result.append(v.item())
+                v = v.item()
+            # 浮点数保留2位小数
+            if isinstance(v, float):
+                result.append(round(v, 2))
             else:
                 result.append(v)
         return result
@@ -238,11 +255,11 @@ def _format_sample(values: Any, feature) -> Any:
 # ============================================================================
 
 def print_tree_result(
-    dataset_dir: str,
-    splits_info: Dict[str, Dict],
-    split_analyses: Dict[str, Dict],
-    dataset_infos: Optional[dict],
-    meta_parquet: Optional[str],
+        dataset_dir: str,
+        splits_info: Dict[str, Dict],
+        split_analyses: Dict[str, Dict],
+        dataset_infos: Optional[dict],
+        meta_parquet: Optional[str],
 ):
     """树形文本输出."""
     print(f"# Dataset: {dataset_dir}")
@@ -305,11 +322,11 @@ def print_tree_result(
 
 
 def build_json_result(
-    dataset_dir: str,
-    splits_info: Dict[str, Dict],
-    split_analyses: Dict[str, Dict],
-    dataset_infos: Optional[dict],
-    meta_parquet: Optional[str],
+        dataset_dir: str,
+        splits_info: Dict[str, Dict],
+        split_analyses: Dict[str, Dict],
+        dataset_infos: Optional[dict],
+        meta_parquet: Optional[str],
 ) -> dict:
     """构建 JSON 输出的结构化数据."""
     result = {
@@ -372,7 +389,8 @@ def main():
     # 过滤 split
     if args.split:
         if args.split not in splits_info:
-            print(f"[ERROR] split '{args.split}' 不存在. 可用: {list(splits_info.keys())}", file=sys.stderr)
+            print(f"[ERROR] split '{args.split}' 不存在. 可用: {list(splits_info.keys())}",
+                  file=sys.stderr)
             sys.exit(1)
         splits_to_analyze = {args.split: splits_info[args.split]}
     else:
@@ -387,10 +405,12 @@ def main():
 
     # Phase 3: 输出
     if args.json:
-        result = build_json_result(dataset_dir, splits_info, split_analyses, dataset_infos, meta_parquet)
+        result = build_json_result(dataset_dir, splits_info, split_analyses, dataset_infos,
+                                   meta_parquet)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     else:
-        print_tree_result(dataset_dir, splits_to_analyze, split_analyses, dataset_infos, meta_parquet)
+        print_tree_result(dataset_dir, splits_to_analyze, split_analyses, dataset_infos,
+                          meta_parquet)
 
 
 if __name__ == "__main__":

@@ -9,12 +9,13 @@ HuggingFace 数据集预览工具
 =============================
 功能对标 h5_preview.py, 但输入是 HF 数据集文件夹 (含多个 parquet 分片).
 
-用法:
-  cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
-  python hf_preview.py /home/data/HF/OmniFace --num 10
-  python hf_preview.py /home/data/HF/OmniShape --num 10
-  python hf_preview.py /home/data/HF/OmniFace --split val --num 5
-  python hf_preview.py /home/data/HF/OmniFace --label-fields id,age --num 10
+用法,替换下面的脚本入参中的dataset_dir为(默认val,因为可以缓存用的少点):
+/home/cy/datasets/imagenet-1k
+/home/data/HF/OmniFace512
+/home/data/HF/OmniFace64
+/home/data/HF/OmniShape128
+/home/data/HF/OmniShape64
+/home/data/HF/OmniShape128_test
 """
 
 import argparse
@@ -35,12 +36,12 @@ from datasets import load_dataset, Image as HFImage, Sequence, Value, ClassLabel
 def main():
     parser = argparse.ArgumentParser(description="HuggingFace 数据集预览工具",
                                      formatter_class=argparse.RawDescriptionHelpFormatter, )
-    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace_o",
+    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace512",
                         help="数据集文件夹路径")
-    parser.add_argument("--label-fields", type=str, default="id,age",
+    parser.add_argument("--label-fields", type=str, default=None,
                         help="手动指定显示的标签字段 (逗号分隔, 默认自动选择)", )
     parser.add_argument("--num", "-n", type=int, default=10, help="抽取数量 (默认 10)")
-    parser.add_argument("--split", type=str, default="train", help="指定 split (默认 train)")
+    parser.add_argument("--split", type=str, default="val", help="指定 split")
 
     args = parser.parse_args()
 
@@ -187,11 +188,25 @@ def preview_dataset(
         print("[ERROR] 未找到 Image 类型的字段", file=sys.stderr)
         sys.exit(1)
 
-    # 选择标签字段
+    # 智能选择标签字段
     if label_fields is None:
-        label_fields = auto_select_label_fields(ds)
+        dataset_name = os.path.basename(os.path.normpath(dataset_dir))
+        if dataset_name.startswith("OmniShape"):
+            if "model_id" in ds.features:
+                label_fields = ["model_id"]
+                print(f"自动选择: OmniShape 数据集, 使用标签: model_id", file=sys.stderr)
+        elif dataset_name.startswith("OmniFace"):
+            if "age" in ds.features:
+                label_fields = ["age"]
+                print(f"自动选择: OmniFace 数据集, 使用标签: age", file=sys.stderr)
+        else:
+            label_fields = []
+            print(f"自动选择: 未知数据集, 不显示标签", file=sys.stderr)
 
-    print(f"图片字段: {img_field}, 标签字段: {label_fields}", file=sys.stderr)
+    if not label_fields:
+        print(f"图片字段: {img_field}, 不显示标签", file=sys.stderr)
+    else:
+        print(f"图片字段: {img_field}, 标签字段: {label_fields}", file=sys.stderr)
 
     # 随机采样
     idxs = random.sample(range(N), min(num, N))

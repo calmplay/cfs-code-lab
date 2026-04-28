@@ -28,21 +28,49 @@ python c00_utils/hf_read_test.py \
 
 # 测试 OmniFace (512x512)
 python c00_utils/hf_read_test.py \
-    --input /home/data/HF/OmniFace_o \
+    --input /home/data/HF/OmniFace512 \
     --datasource OmniFace \
     --size 512 \
     --batch_size 128 \
     --num_batches 100 \
     --num_workers 12
 
+# 测试 OmniFace (64x64)
+python c00_utils/hf_read_test.py \
+    --input /home/data/HF/OmniFace64 \
+    --datasource OmniFace \
+    --size 64 \
+    --batch_size 128 \
+    --num_batches 100 \
+    --num_workers 12
+
 # 测试 OmniShape (128x128)
 python c00_utils/hf_read_test.py \
-    --input /home/data/HF/OmniShape_o \
+    --input /home/data/HF/OmniShape128 \
     --datasource OmniShape \
     --size 128 \
     --batch_size 128 \
     --num_batches 100 \
     --num_workers 12
+
+# 测试 OmniShape (64x64)
+python c00_utils/hf_read_test.py \
+    --input /home/data/HF/OmniShape64 \
+    --datasource OmniShape \
+    --size 128 \
+    --batch_size 128 \
+    --num_batches 100 \
+    --num_workers 12
+
+# 测试 OmniShape_test(128x128)
+python c00_utils/hf_read_test.py \
+    --input /home/data/HF/OmniShape128_test \
+    --datasource OmniShape \
+    --size 128 \
+    --batch_size 128 \
+    --num_batches 100 \
+    --num_workers 12
+
 """
 
 import argparse
