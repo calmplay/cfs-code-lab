@@ -16,26 +16,13 @@
 6. 支持 train/val/test 三种 split
 
 使用示例:
-```python
 from h5hf_omni_dataset import OmniDataset
 
 # 自动检测格式创建数据集（必须指定 split）
 train_dataset = OmniDataset(
-    path="/home/data/HF/OmniShape",
+    path="/home/data/HF/OmniFace512",
     datasource="OmniShape",
     split="train"
-)
-
-val_dataset = OmniDataset(
-    path="/home/data/HF/OmniShape",
-    datasource="OmniShape",
-    split="val"
-)
-
-test_dataset = OmniDataset(
-    path="/home/data/HF/OmniShape",
-    datasource="OmniShape",
-    split="test"
 )
 
 # 通过 dataset 实例获取 DataLoader
@@ -45,24 +32,11 @@ train_loader = train_dataset.get_dataloader(
     shuffle=True
 )
 
-val_loader = val_dataset.get_dataloader(
-    batch_size=128,
-    num_workers=8,
-    shuffle=False
-)
-
-test_loader = test_dataset.get_dataloader(
-    batch_size=128,
-    num_workers=8,
-    shuffle=False
-)
-
 # 使用数据
 for batch in train_loader:
     images = batch["image"]  # 图像
     model_id = batch["model_id"]  # 模型 ID
     # ... 训练逻辑
-```
 """
 
 import os
@@ -73,7 +47,6 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 
-# 尝试导入 H5 和 HF 相关库
 try:
     import h5py
 
@@ -89,8 +62,6 @@ try:
     HAS_HF_DATASETS = True
 except ImportError:
     HAS_HF_DATASETS = False
-
-# ==================== 字段定义（统一共享）====================
 
 # OmniFace 字段定义
 OMNIFACE_FIELDS = {
@@ -192,9 +163,84 @@ OMNISHAPE_META_FIELDS = {
 }
 
 
-# ==================== H5 格式数据集类 ====================
+def OmniDataset(
+        path: str,
+        size: Optional[int] = None,
+        datasource: str = "OmniShape",
+        split: Optional[str] = None,
+        transform: Optional[transforms.Compose] = None,
+        format: Optional[str] = None
+):
+    """
+    统一的数据集创建接口，自动检测数据格式
 
-class H5OmniDataset(Dataset):
+    Args:
+        path: 数据路径（H5 文件或 HF 数据集目录）
+        size: 图像尺寸
+        datasource: 数据集类型，"OmniFace" 或 "OmniShape"
+        split: 数据集分割，**必须指定** "train"、"val" 或 "test"
+        transform: 图像变换
+        format: 数据格式，"h5" 或 "hf"，默认自动检测
+
+    Returns:
+        H5OmniDataset 或 HFOmniDataset 实例
+
+    Raises:
+        ValueError: 如果未指定 split 参数
+    """
+    if split is None:
+        raise ValueError("必须指定 split 参数（'train', 'val' 或 'test'）")
+
+    # 自动检测格式
+    if format is None:
+        format = _detect_format(path)
+
+    if format == "h5":
+        return _H5OmniDataset(
+            path=path,
+            size=size,
+            datasource=datasource,
+            split=split,
+            transform=transform
+        )
+    elif format == "hf":
+        return _HFOmniDataset(
+            path=path,
+            size=size,
+            datasource=datasource,
+            split=split,
+            transform=transform
+        )
+    else:
+        raise ValueError(f"不支持的数据格式: {format}")
+
+
+def _detect_format(path: str) -> str:
+    """
+    自动检测数据格式
+
+    Args:
+        path: 数据路径
+
+    Returns:
+        "h5" 或 "hf"
+    """
+    if path.endswith(".h5") or path.endswith(".hdf5"):
+        return "h5"
+
+    # 检查是否是 HF 数据集目录
+    if os.path.isdir(path):
+        data_dir = os.path.join(path, "data")
+        if os.path.exists(data_dir):
+            for f in os.listdir(data_dir):
+                if f.endswith(".parquet"):
+                    return "hf"
+
+    # 默认返回 h5
+    return "h5"
+
+
+class _H5OmniDataset(Dataset):
     """H5 格式的 OmniFace 和 OmniShape 数据集类"""
 
     def __init__(
@@ -446,9 +492,7 @@ class H5OmniDataset(Dataset):
         return False
 
 
-# ==================== HF 格式数据集类 ====================
-
-class HFOmniDataset(Dataset):
+class _HFOmniDataset(Dataset):
     """HuggingFace (parquet) 格式的 OmniFace 和 OmniShape 数据集类"""
 
     def __init__(
@@ -652,93 +696,9 @@ class HFOmniDataset(Dataset):
         )
 
 
-# ==================== 统一接口函数 ====================
-
-def detect_format(path: str) -> str:
-    """
-    自动检测数据格式
-    
-    Args:
-        path: 数据路径
-        
-    Returns:
-        "h5" 或 "hf"
-    """
-    if path.endswith(".h5") or path.endswith(".hdf5"):
-        return "h5"
-
-    # 检查是否是 HF 数据集目录
-    if os.path.isdir(path):
-        data_dir = os.path.join(path, "data")
-        if os.path.exists(data_dir):
-            for f in os.listdir(data_dir):
-                if f.endswith(".parquet"):
-                    return "hf"
-
-    # 默认返回 h5
-    return "h5"
-
-
-def OmniDataset(
-        path: str,
-        size: Optional[int] = None,
-        datasource: str = "OmniShape",
-        split: Optional[str] = None,
-        transform: Optional[transforms.Compose] = None,
-        format: Optional[str] = None
-):
-    """
-    统一的数据集创建接口，自动检测数据格式
-    
-    Args:
-        path: 数据路径（H5 文件或 HF 数据集目录）
-        size: 图像尺寸
-        datasource: 数据集类型，"OmniFace" 或 "OmniShape"
-        split: 数据集分割，**必须指定** "train"、"val" 或 "test"
-        transform: 图像变换
-        format: 数据格式，"h5" 或 "hf"，默认自动检测
-        
-    Returns:
-        H5OmniDataset 或 HFOmniDataset 实例
-        
-    Raises:
-        ValueError: 如果未指定 split 参数
-    """
-    if split is None:
-        raise ValueError("必须指定 split 参数（'train', 'val' 或 'test'）")
-
-    # 自动检测格式
-    if format is None:
-        format = detect_format(path)
-
-    if format == "h5":
-        return H5OmniDataset(
-            path=path,
-            size=size,
-            datasource=datasource,
-            split=split,
-            transform=transform
-        )
-    elif format == "hf":
-        return HFOmniDataset(
-            path=path,
-            size=size,
-            datasource=datasource,
-            split=split,
-            transform=transform
-        )
-    else:
-        raise ValueError(f"不支持的数据格式: {format}")
-
-
-# ==================== 导出接口 ====================
-
 __all__ = [
     "OmniDataset",
-    "H5OmniDataset",
-    "HFOmniDataset",
     "OMNIFACE_FIELDS",
     "OMNISHAPE_FIELDS",
     "OMNISHAPE_META_FIELDS",
-    "detect_format"
 ]
