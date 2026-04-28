@@ -10,9 +10,9 @@ HuggingFace (parquet) 格式的 OmniFace 和 OmniShape 数据集类
 功能:
 1. 统一支持 OmniFace 和 OmniShape 两种数据集
 2. 对于 HF 格式，图像存储格式一致
-3. 对于 OmniShape，支持将元数据信息解析到每个样本
-4. 提供标准的 PyTorch Dataset 接口
-5. 提供快速生成 DataLoader 的方法
+3. 提供标准的 PyTorch Dataset 接口
+4. 提供快速生成 DataLoader 的方法
+5. 提供单独的元数据查询接口（仅 OmniShape）
 
 使用示例:
 ```python
@@ -322,13 +322,109 @@ class HFOmniDataset(Dataset):
                     else:
                         item[field] = val
         
-        # 对于 OmniShape，添加元数据
-        if self.datasource == "OmniShape":
-            model_id = item.get("model_id")
-            if model_id and model_id in self.model_id_to_meta:
-                item.update(self.model_id_to_meta[model_id])
-        
         return item
+    
+    # ============ 元数据查询接口（仅 OmniShape）============
+    def get_meta_by_index(self, idx: int) -> Optional[Dict]:
+        """
+        根据下标获取模型元数据
+        
+        Args:
+            idx: 元数据索引
+            
+        Returns:
+            元数据字典，如果不存在返回 None
+        """
+        if self.datasource != "OmniShape" or not self.meta_data:
+            return None
+            
+        if idx < 0 or idx >= len(self.meta_data.get("model_id", [])):
+            return None
+            
+        return {
+            k: v[idx] for k, v in self.meta_data.items()
+        }
+    
+    def get_meta_by_model_id(self, model_id: str) -> Optional[Dict]:
+        """
+        根据 model_id 获取模型元数据
+        
+        Args:
+            model_id: 模型 ID
+            
+        Returns:
+            元数据字典，如果不存在返回 None
+        """
+        if self.datasource != "OmniShape" or not self.model_id_to_meta:
+            return None
+            
+        return self.model_id_to_meta.get(model_id)
+    
+    def get_meta_by_class_id(self, class_id: str) -> List[Dict]:
+        """
+        根据 class_id 获取所有匹配的模型元数据
+        
+        Args:
+            class_id: 类别 ID
+            
+        Returns:
+            元数据字典列表
+        """
+        if self.datasource != "OmniShape" or not self.meta_data:
+            return []
+            
+        results = []
+        class_ids = self.meta_data.get("class_id", [])
+        for i, cid in enumerate(class_ids):
+            if cid == class_id:
+                results.append({
+                    k: v[i] for k, v in self.meta_data.items()
+                })
+        return results
+    
+    def get_meta_by_class100_id(self, class100_id: str) -> List[Dict]:
+        """
+        根据 class100_id 获取所有匹配的模型元数据
+        
+        Args:
+            class100_id: 粗粒度类别 ID
+            
+        Returns:
+            元数据字典列表
+        """
+        if self.datasource != "OmniShape" or not self.meta_data:
+            return []
+            
+        results = []
+        class100_ids = self.meta_data.get("class100_id", [])
+        for i, cid in enumerate(class100_ids):
+            if cid == class100_id:
+                results.append({
+                    k: v[i] for k, v in self.meta_data.items()
+                })
+        return results
+    
+    def get_meta_keys(self) -> List[str]:
+        """
+        获取所有元数据字段名
+        
+        Returns:
+            字段名列表
+        """
+        if not self.meta_data:
+            return []
+        return list(self.meta_data.keys())
+    
+    def get_num_meta_entries(self) -> int:
+        """
+        获取元数据条目数量
+        
+        Returns:
+            条目数量
+        """
+        if not self.meta_data:
+            return 0
+        return len(next(iter(self.meta_data.values())))
     
     def get_dataloader(
         self,
