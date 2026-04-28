@@ -8,52 +8,64 @@
 ==================================
 
 功能:
-1. 使用标准的 H5OmniDataset 类
+1. 使用统一的 OmniDataset 接口
 2. 模拟训练时的 batch 持续循环读取
 3. 计算读取速度、IO 速率等性能指标
 4. 输出清晰的日志信息
 
 使用示例:
-```bash
+
+cd /home/cy/nuist-lab/cfs-code-lab
+
 # 测试 OmniFace (64x64)
-python h5_read_test.py \
-    --input /home/data/OmniFace_64x64_20260421.h5 \
+python c00_utils/h5_read_test.py \
+    --input /home/data/OmniFace64-V1_20260421.h5 \
     --datasource OmniFace \
     --size 64 \
     --batch_size 128 \
-    --num_batches 100
+    --num_batches 100 \
+    --num_workers 12
+
+# 测试 OmniShape (64x64)
+python c00_utils/h5_read_test.py \
+    --input /home/data/OmniShape64-V1_20260421.h5 \
+    --datasource OmniShape \
+    --size 128 \
+    --batch_size 128 \
+    --num_batches 100 \
+    --num_workers 12
 
 # 测试 OmniShape (128x128)
-python h5_read_test.py \
+python c00_utils/h5_read_test.py \
     --input /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
     --datasource OmniShape \
     --size 128 \
     --batch_size 128 \
-    --num_batches 100
-```
+    --num_batches 100 \
+    --num_workers 12
 """
 
 import argparse
-import time
-import sys
 import gc
+import sys
+import time
 
 import torch
 from tqdm import tqdm
 
-from h5_omni_dataset import H5OmniDataset
+from h5hf_omni_dataset import OmniDataset
 
 
 def test_h5_read(
-    h5_path: str,
-    datasource: str = "OmniShape",
-    size: int = None,
-    split: str = "train",
-    batch_size: int = 128,
-    num_batches: int = 100,
-    shuffle: bool = True,
-    num_workers: int = 8,
-    pin_memory: bool = True
+        h5_path: str,
+        datasource: str = "OmniShape",
+        size: int = None,
+        split: str = "train",
+        batch_size: int = 128,
+        num_batches: int = 100,
+        shuffle: bool = True,
+        num_workers: int = 8,
+        pin_memory: bool = True
 ):
     print(f"\n{'=' * 70}")
     print(f"测试 H5 格式数据 batch 读取性能")
@@ -69,14 +81,15 @@ def test_h5_read(
     print(f"  是否固定内存: {pin_memory}")
     print()
 
-    # 创建数据集
+    # 创建数据集（使用统一接口，强制指定为 h5 格式）
     print(f"  正在创建数据集...")
     start_time = time.time()
-    dataset = H5OmniDataset(
+    dataset = OmniDataset(
         path=h5_path,
         size=size,
         datasource=datasource,
-        split=split
+        split=split,
+        format="h5"  # 强制指定为 H5 格式
     )
     dataset_create_time = time.time() - start_time
     print(f"  数据集创建完成，耗时: {dataset_create_time:.4f}秒")
@@ -105,13 +118,16 @@ def test_h5_read(
     total_bytes = 0
     first_batch_time = None
 
+    # 创建迭代器一次，模拟真实训练场景
+    data_iter = iter(dataloader)
+
     with tqdm(range(num_batches), file=sys.stdout) as pbar:
         for batch_idx in pbar:
             try:
                 start_time = time.time()
 
-                # 使用循环迭代
-                batch = next(iter(dataloader))
+                # 从迭代器获取下一个 batch
+                batch = next(data_iter)
 
                 end_time = time.time()
                 batch_time = end_time - start_time
@@ -152,7 +168,8 @@ def test_h5_read(
                 if (batch_idx + 1) % 10 == 0 or batch_idx == num_batches - 1:
                     batch_speed = batch_size_actual / batch_time if batch_time > 0 else 0
                     batch_io = batch_bytes / (1024 * 1024 * batch_time) if batch_time > 0 else 0
-                    print(f"  Batch {batch_idx + 1:4d}: 样本={batch_size_actual:4d}, 耗时={batch_time:.4f}s, 速度={batch_speed:.1f}img/s, IO={batch_io:.2f}MB/s")
+                    print(
+                        f"  Batch {batch_idx + 1:4d}: 样本={batch_size_actual:4d}, 耗时={batch_time:.4f}s, 速度={batch_speed:.1f}img/s, IO={batch_io:.2f}MB/s")
 
                 # 定期清理内存
                 if batch_idx % 50 == 0:
@@ -174,8 +191,8 @@ def test_h5_read(
     print("  " + "=" * 50)
     print("  总统计信息:")
     print("  " + "=" * 50)
-    print(f"    总样本数: {total_samples:,}")
-    print(f"    总耗时: {total_time:.4f}秒")
+    print(f"    样本数: {total_samples:,}/{len(dataset):,}")
+    print(f"    耗时: {total_time:.4f}秒")
     print(f"    第一个 batch 耗时: {first_batch_time:.4f}秒 (包含初始化)")
     print(f"    平均速度: {avg_speed:.2f} img/s")
     print(f"    平均 IO 速率: {avg_io:.2f} MB/s")
@@ -195,8 +212,9 @@ def test_h5_read(
     print()
 
     # 清理资源
-    dataset.close()
-    print("  资源已清理")
+    if hasattr(dataset, 'close'):
+        dataset.close()
+        print("  dataset closed.")
     print()
 
 

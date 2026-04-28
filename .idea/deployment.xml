@@ -10,10 +10,17 @@
           </mappings>
         </serverdata>
       </paths>
-      <paths name="1号机dev">
+      <paths name="1号机">
         <serverdata>
           <mappings>
             <mapping deploy="/home/cy/nuist-lab/cfs-code-lab" local="$PROJECT_DIR$" web="/" />
+          </mappings>
+        </serverdata>
+      </paths>
+      <paths name="3号机">
+        <serverdata>
+          <mappings>
+            <mapping deploy="/home/cy/nuist-lab/cfs-code-lab" local="$PROJECT_DIR$" />
           </mappings>
         </serverdata>
       </paths>

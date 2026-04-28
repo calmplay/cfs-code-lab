@@ -37,6 +37,13 @@ H5 -> HuggingFace Datasets (Parquet 分片) 转换工具
       -o /home/data/HF/OmniShape_o \
       -w 32
 
+  # OmniShape较慢, 可以先快速验证
+  python h5_to_hf_optimized.py -d omnishape \
+      -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
+      -o /home/data/HF/OmniShape_test \
+      -w 32 \
+      --max-samples 10000
+
   # 验证
   python h5_to_hf_optimized.py -d omniface -i /home/data/OmniFace_64x64_20260421.h5 -o /home/data/HF/OmniFace64 --verify
   python h5_to_hf_optimized.py -d omnishape -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 -o /home/data/HF/OmniShape --verify
@@ -616,8 +623,25 @@ def save_omnishape_meta(f: h5py.File, output_dir: str):
     meta_bytes_fields = {"model_id", "class_id", "class100_id"}
     meta_object_fields = {"model_name", "class_name", "class100_name"}
 
+    # 读取所有字段并检查长度一致性
+    field_lengths = {}
     for field, cfg in OMNISHAPE_META_FIELDS.items():
         vals = f[f"meta/{field}"][:]
+        field_lengths[field] = len(vals)
+        
+    # 检查所有字段长度是否一致
+    lengths = list(field_lengths.values())
+    if len(set(lengths)) > 1:
+        print(f"  [警告] meta 字段长度不一致: {field_lengths}")
+        # 使用最小长度作为基准
+        min_length = min(lengths)
+        print(f"  [警告] 使用最小长度 {min_length} 作为基准")
+    else:
+        min_length = lengths[0]
+
+    # 重新读取并截断到最小长度
+    for field, cfg in OMNISHAPE_META_FIELDS.items():
+        vals = f[f"meta/{field}"][:min_length]
         if field in meta_bytes_fields:
             meta_batch[field] = [bytes_to_str(v) for v in vals]
         elif field in meta_object_fields:
@@ -642,6 +666,7 @@ def convert_omnishape(
         val_ratio: float = 0.05,
         seed: int = 42,
         workers: int = 16,
+        max_samples: int = None,
 ):
     print(f"\n{'=' * 60}")
     print(f"开始转换 OmniShape: {h5_path}")
@@ -665,13 +690,22 @@ def convert_omnishape(
 
         print(f"  按 model_id 划分 train/val (val_ratio={val_ratio}, seed={seed})...")
         train_idx, val_idx = _split_omnishape_indices(f, val_ratio, seed)
-        print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}")
+        
+        # 限制最大样本数
+        if max_samples is not None:
+            print(f"  [限制样本数模式] 只处理前 {max_samples:,} 个样本")
+            train_idx = train_idx[:max_samples]
+            val_idx = val_idx[:max_samples]
+            print(f"  限制后 - train: {len(train_idx):,}, val: {len(val_idx):,}")
+        else:
+            print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}")
 
         split_info = {
             "seed": seed,
             "val_ratio": val_ratio,
             "train_count": int(len(train_idx)),
             "val_count": int(len(val_idx)),
+            "max_samples": max_samples,
         }
         split_fpath = os.path.join(output_dir, "split_indices.json")
         with open(split_fpath, "w", encoding="utf-8") as sf:
@@ -855,6 +889,12 @@ def main():
         default=default_workers(),
         help=f"JPEG 编码并行进程数, 默认 {default_workers()}",
     )
+    parser.add_argument(
+        "--max-samples",
+        type=int,
+        default=None,
+        help="限制处理的最大样本数，例如100000",
+    )
 
     args = parser.parse_args()
 
@@ -880,6 +920,7 @@ def main():
             val_ratio=args.val_ratio,
             seed=args.seed,
             workers=args.workers,
+            max_samples=args.max_samples,
         )
 
 

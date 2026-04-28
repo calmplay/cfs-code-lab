@@ -16,12 +16,10 @@ HDF5 结构分析脚本
 
 用法:
   cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
-  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/facial/OmniFace/OmniFace_202601191951.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniFace64-V1_20260421.h5
   python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniFace_202602042244.h5
+  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniShape64-V1_20260421.h5
   python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/data/OmniShape1k_18000a_128x128_20251204.h5
-  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/UTKFace_64x64.h5
-  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/ShapeNet_function_v1_16_64x64_900.h5
-  python /home/cy/nuist-lab/cfs-code-lab/c00_utils/h5_inspect.py /home/cy/datasets/CCGM/raw100_new_128x128.h5
 
   # 限制深度为2层
   python h5_inspect.py your_file.h5 -d 2

@@ -11,7 +11,7 @@ HuggingFace 数据集结构分析工具
 
 用法:
   cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
-  python hf_inspect.py /home/data/HF/OmniFace
+  python hf_inspect.py /home/data/HF/OmniFace_o
   python hf_inspect.py /home/data/HF/OmniShape
   python hf_inspect.py /home/data/HF/OmniFace -j > structure.json
   python hf_inspect.py /home/data/HF/OmniFace --sample 3
