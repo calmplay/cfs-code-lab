@@ -22,15 +22,13 @@ from h5hf_omni_dataset import OmniDataset
 train_dataset = OmniDataset(
     path="/home/data/HF/OmniFace512",
     datasource="OmniShape",
-    split="train"
-)
+    split="train")
 
 # 通过 dataset 实例获取 DataLoader
 train_loader = train_dataset.get_dataloader(
     batch_size=128,
     num_workers=8,
-    shuffle=True
-)
+    shuffle=True)
 
 # 使用数据
 for batch in train_loader:
