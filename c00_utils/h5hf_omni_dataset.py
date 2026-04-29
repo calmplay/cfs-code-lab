@@ -357,10 +357,8 @@ class _H5OmniDataset(Dataset):
                 raise ValueError(f"不支持的 split: {self.split}，必须是 'train', 'val' 或 'test'")
 
         elif self.datasource == "OmniShape":
-            raise ValueError(
-                "OmniShape 的 H5 格式不支持直接读取 split，请先转换为 HF (parquet) 格式。"
-                "使用 h5_to_hf.py 进行转换。"
-            )
+            n_total = self.h5_file["images"].shape[0]
+            return np.arange(n_total)
 
         raise ValueError(f"不支持的数据集类型: {self.datasource}")
 
