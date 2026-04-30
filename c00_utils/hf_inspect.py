@@ -11,18 +11,24 @@ HuggingFace 数据集结构分析工具
 
 用法:
 cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
-python hf_inspect.py /home/data/HF/OmniFace512
-python hf_inspect.py /home/data/HF/OmniFace512 -j > structure.json
-python hf_inspect.py /home/data/HF/OmniFace512 --sample 3
-python hf_inspect.py /home/data/HF/OmniFace512 --split test
-python hf_inspect.py /home/data/HF/OmniFace64
-python hf_inspect.py /home/data/HF/OmniShape128
-python hf_inspect.py /home/data/HF/OmniShape64
-python hf_inspect.py /home/data/HF/OmniShape128_test
 
+# OmniFace
+python hf_inspect.py /home/data/HF/OmniFace64-V1_20260430
+python hf_inspect.py /home/data/HF/OmniFace512-V1_20260430
+
+# OmniShape
+python hf_inspect.py /home/data/HF/OmniShape64-V1_20260430
+python hf_inspect.py /home/data/HF/OmniShape128-V1_20260430
+python hf_inspect.py /home/data/HF/OmniShape128-V1_test
+
+# JSON 输出
+python hf_inspect.py /home/data/HF/OmniFace64-V1_20260430 -j > structure.json
+
+# 采样数量
+python hf_inspect.py /home/data/HF/OmniShape128-V1_20260430 --sample 5
+
+# ImageNet
 python hf_inspect.py /home/cy/datasets/imagenet-1k
-
-
 """
 
 import argparse
@@ -63,7 +69,7 @@ def scan_dataset_dir(dataset_dir: str) -> Dict[str, Dict[str, Any]]:
         return {}
 
     # 按 split 分组: train-00000-of-00139.parquet -> split="train"
-    split_pattern = re.compile(r"^(train|validation|val|test|dev|training|eval)-\d+")
+    split_pattern = re.compile(r"^(all|train|validation|val|test|dev|training|eval)-\d+")
     splits = defaultdict(lambda: {"files": [], "num_shards": 0, "total_size": 0})
 
     for fname in parquet_files:
@@ -99,12 +105,30 @@ def load_dataset_infos(dataset_dir: str) -> Optional[dict]:
     return None
 
 
-def check_meta_parquet(dataset_dir: str) -> Optional[str]:
-    """检查 meta.parquet 是否存在."""
-    fpath = os.path.join(dataset_dir, "meta.parquet")
-    if os.path.isfile(fpath):
-        return fpath
-    return None
+def check_meta_parquet(dataset_dir: str) -> Optional[Dict[str, Any]]:
+    """检查 meta/ 目录下的 parquet 文件."""
+    meta_dir = os.path.join(dataset_dir, "meta")
+    if not os.path.isdir(meta_dir):
+        return None
+    
+    meta_files = sorted([
+        f for f in os.listdir(meta_dir) 
+        if f.endswith(".parquet") and f.startswith("meta_")
+    ])
+    if not meta_files:
+        return None
+    
+    total_size = sum(
+        os.path.getsize(os.path.join(meta_dir, f)) 
+        for f in meta_files
+    )
+    
+    return {
+        "dir": meta_dir,
+        "files": meta_files,
+        "num_files": len(meta_files),
+        "total_size": total_size,
+    }
 
 
 # ============================================================================
@@ -259,7 +283,7 @@ def print_tree_result(
         splits_info: Dict[str, Dict],
         split_analyses: Dict[str, Dict],
         dataset_infos: Optional[dict],
-        meta_parquet: Optional[str],
+        meta_info: Optional[Dict[str, Any]],
 ):
     """树形文本输出."""
     print(f"# Dataset: {dataset_dir}")
@@ -275,9 +299,9 @@ def print_tree_result(
     if dataset_infos:
         print(f"# dataset_infos.json: found")
 
-    if meta_parquet:
-        meta_size = _format_size(os.path.getsize(meta_parquet))
-        print(f"# meta.parquet: {meta_parquet} ({meta_size})")
+    if meta_info:
+        meta_size = _format_size(meta_info["total_size"])
+        print(f"# meta/: {meta_info['num_files']} files, {meta_size}")
 
     print()
 
@@ -326,7 +350,7 @@ def build_json_result(
         splits_info: Dict[str, Dict],
         split_analyses: Dict[str, Dict],
         dataset_infos: Optional[dict],
-        meta_parquet: Optional[str],
+        meta_info: Optional[Dict[str, Any]],
 ) -> dict:
     """构建 JSON 输出的结构化数据."""
     result = {
@@ -349,11 +373,8 @@ def build_json_result(
     if dataset_infos:
         result["dataset_infos"] = dataset_infos
 
-    if meta_parquet:
-        result["meta_parquet"] = {
-            "path": meta_parquet,
-            "size": os.path.getsize(meta_parquet),
-        }
+    if meta_info:
+        result["meta"] = meta_info
 
     return result
 
@@ -384,7 +405,7 @@ def main():
         sys.exit(1)
 
     dataset_infos = load_dataset_infos(dataset_dir)
-    meta_parquet = check_meta_parquet(dataset_dir)
+    meta_info = check_meta_parquet(dataset_dir)
 
     # 过滤 split
     if args.split:
@@ -406,11 +427,11 @@ def main():
     # Phase 3: 输出
     if args.json:
         result = build_json_result(dataset_dir, splits_info, split_analyses, dataset_infos,
-                                   meta_parquet)
+                                   meta_info)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     else:
         print_tree_result(dataset_dir, splits_to_analyze, split_analyses, dataset_infos,
-                          meta_parquet)
+                          meta_info)
 
 
 if __name__ == "__main__":

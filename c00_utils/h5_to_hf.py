@@ -1,89 +1,59 @@
 # -*- coding: utf-8 -*-
-# @Time    : 2026/4/21
+# @Time    : 2026/4/30
 # @Author  : OpenAI
-# @Comments: H5 -> HuggingFace Datasets (Parquet shards) 转换工具（优化版）
+# @Comments: H5 -> HuggingFace Datasets (Parquet shards) 转换工具（重构版，只输出 all split）
 
 """
 H5 -> HuggingFace Datasets (Parquet 分片) 转换工具
 ===================================================
 
-目标:
-1. 图片列统一写成 HuggingFace Image 标准底层结构:
+核心特性:
+1. 不划分 train/val/test，只输出 all split
+2. 严格顺序读取 H5，Parquet 样本顺序与 H5 原始顺序一致
+3. 图片列统一写成 HuggingFace Image 标准底层结构:
    {"bytes": <image_file_bytes>, "path": None}
-2. OmniFace:
+4. OmniFace:
    - 支持原始 images 为 JPEG 字节流 (shape=(N,))
    - 支持原始 images 为 uint8 CHW 数组 (shape=(N, 3, H, W))
-3. OmniShape:
+5. OmniShape:
    - uint8 CHW -> JPEG(quality=95 默认)
    - 进程池持久化, 只创建一次
-   - 使用"按样本数近似控 shard"替代逐元素估大小
-4. 其他样本列 / meta 列完整保留
-
-============================================
-Train/Val/Test 划分逻辑说明
-============================================
-
-OmniFace 划分逻辑:
-------------------
-来源: H5 文件中预定义的 train_indices 和 val_indices
-- train: 使用原始 train_indices
-- val: 从原始 val_indices 中取 1/3（下标 %3 == 0）
-- test: 从原始 val_indices 中取 2/3（下标 %3 == 1 或 2）
-- 确保同一组样本在不同运行时保持一致的划分
-
-OmniShape 划分逻辑:
-------------------
-来源: 转换时按 class（8个大类）动态计算
-- 首先按 class 分桶（8个大类）
-- 在每个 class 桶内，按 model_id 不重叠划分
-- val: 每个 class 取 1% 的 model_id（向下取整）
-- test: 每个 class 取 2% 的 model_id（向下取整）
-- train: 剩余的 model_id
-- 确保同一 model_id 的所有样本在同一个 split 中
-- 使用 seed=42 保证可复现性
-
-============================================
+   - meta 数据自动遍历 H5 /meta group 并完整保存
 
 示例:
 cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
 
 # OmniFace 转换
-# OmniFace512: 图像较大(512x512)，推荐 worker=16-24
-python h5_to_hf.py -d omniface \
-  -i /home/data/OmniFace_202602042244.h5 \
-  -o /home/data/HF/OmniFace512 \
-  -w 16
-
-# OmniFace64: 图像较小(64x64)，推荐 worker=8-16
 python h5_to_hf.py -d omniface \
   -i /home/data/OmniFace64-V1_20260421.h5 \
-  -o /home/data/HF/OmniFace64 \
+  -o /home/data/HF/OmniFace64-V1_20260430 \
   -w 12
 
-# OmniShape 转换（使用默认比例：1% val, 2% test）
-# OmniShape128: 推荐 worker=24-32
-python h5_to_hf.py -d omnishape \
-  -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
-  -o /home/data/HF/OmniShape128 \
-  -w 24
+python h5_to_hf.py -d omniface \
+  -i /mhd/home/data/OmniFace_202602042244.h5 \
+  -o /home/data/HF/OmniFace512-V1_20260430 \
+  -w 12
 
+# OmniShape 转换
 python h5_to_hf.py -d omnishape \
   -i /home/data/OmniShape64-V1_20260421.h5 \
-  -o /home/data/HF/OmniShape64 \
+  -o /home/data/HF/OmniShape64-V1_20260430 \
   -w 24
 
-# 自定义比例示例,增加参数 --val-ratio 0.02 --test-ratio 0.03
-
-# 快速验证（只处理前 12800 个样本）
-# 快速测试推荐 worker=16
 python h5_to_hf.py -d omnishape \
   -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
-  -o /home/data/HF/OmniShape128_test \
+  -o /home/data/HF/OmniShape128-V1_20260430 \
+  -w 24
+
+# 快速验证（只处理前 10000 个样本）
+python h5_to_hf.py -d omnishape \
+  -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 \
+  -o /home/data/HF/OmniShape128-V1_test \
   -w 16 \
   --max-samples 12800
 
 # 验证
-python h5_to_hf.py -d omniface -i /home/data/OmniFace_64x64_20260421.h5 -o /home/data/HF/OmniFace64 --verify
+python h5_to_hf.py -d omniface -i /home/data/OmniFace64-V1_20260421.h5 -o /home/data/HF/OmniFace64 --verify
 python h5_to_hf.py -d omnishape -i /home/data/OmniShape1k_18000a_128x128_20251204.h5 -o /home/data/HF/OmniShape --verify
 """
 
@@ -91,11 +61,11 @@ import argparse
 import io
 import json
 import os
+import shutil
 import sys
 import time
-from collections import defaultdict
 from multiprocessing import Pool
-from typing import Any, Dict, List, Optional, Sequence as TypingSequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence as TypingSequence, Tuple, Union
 
 import h5py
 import numpy as np
@@ -173,7 +143,7 @@ class ManagedEncoder:
 
 class ApproxShardPlanner:
     """
-    基于一次小样本校准的“按样本数控 shard”规划器.
+    基于一次小样本校准的"按样本数数控 shard"规划器.
     不在每个 batch 上逐元素估大小.
     """
 
@@ -198,7 +168,6 @@ class ApproxShardPlanner:
             elif isinstance(v0, (int, float, np.integer, np.floating)):
                 total += 8 * len(values)
             elif isinstance(v0, list):
-                # 小样本上做一次校准即可
                 total += sum(np.asarray(v).nbytes for v in values)
             else:
                 total += 16 * len(values)
@@ -339,24 +308,6 @@ def build_features(fields_config: Dict[str, dict]) -> Features:
     return Features(feat_dict)
 
 
-def save_dataset_infos(
-        output_dir: str,
-        dataset_name: str,
-        features: Features,
-        splits_info: Dict[str, dict],
-):
-    infos = {
-        dataset_name: {
-            "features": features.to_dict(),
-            "splits": splits_info,
-        }
-    }
-    fpath = os.path.join(output_dir, "dataset_infos.json")
-    with open(fpath, "w", encoding="utf-8") as f:
-        json.dump(infos, f, ensure_ascii=False, indent=2, default=str)
-    print(f"  已保存 {fpath}")
-
-
 def image_dicts_from_jpeg_bytes_list(jpeg_bytes_list: TypingSequence[bytes]) -> List[
     Dict[str, Optional[bytes]]]:
     return [{"bytes": bytes(b), "path": None} for b in jpeg_bytes_list]
@@ -365,8 +316,8 @@ def image_dicts_from_jpeg_bytes_list(jpeg_bytes_list: TypingSequence[bytes]) -> 
 def infer_image_storage_mode(h5_images_ds: h5py.Dataset) -> str:
     """
     返回:
-      - 'jpeg_bytes' : shape=(N,), object/bytes, 每个元素是一张压缩图片字节流
-      - 'chw_uint8'  : shape=(N,3,H,W), uint8 RGB
+      - 'jpeg_bytes': shape=(N,), object/bytes, 每个元素是一张压缩图片字节流
+      - 'chw_uint8': shape=(N,3,H,W), uint8 RGB
     """
     if h5_images_ds.ndim == 1:
         return "jpeg_bytes"
@@ -375,6 +326,72 @@ def infer_image_storage_mode(h5_images_ds: h5py.Dataset) -> str:
     raise ValueError(
         f"无法识别的 images 存储形式: dtype={h5_images_ds.dtype}, shape={h5_images_ds.shape}"
     )
+
+
+def prepare_output_dir(output_dir: str, overwrite: bool = False):
+    """准备输出目录，如果已存在则报错或清空"""
+    if os.path.exists(output_dir):
+        if not overwrite:
+            data_dir = os.path.join(output_dir, "data")
+            if os.path.exists(data_dir):
+                parquet_files = [f for f in os.listdir(data_dir) if f.endswith(".parquet")]
+                if parquet_files:
+                    raise FileExistsError(
+                        f"输出目录已存在且包含 parquet 文件: {output_dir}\n"
+                        f"请使用 --overwrite 参数覆盖，或指定新的输出目录。"
+                    )
+        shutil.rmtree(output_dir)
+
+    os.makedirs(output_dir, exist_ok=True)
+    data_dir = os.path.join(output_dir, "data")
+    os.makedirs(data_dir, exist_ok=True)
+
+
+def save_dataset_infos(
+        output_dir: str,
+        dataset_name: str,
+        features: Features,
+        num_examples: int,
+        shard_paths: List[str],
+):
+    """保存 dataset_infos.json，只包含 all split"""
+    infos = {
+        dataset_name: {
+            "features": features.to_dict(),
+            "splits": {
+                "all": {
+                    "num_examples": num_examples,
+                    "num_shards": len(shard_paths),
+                    "shard_names": [os.path.basename(p) for p in shard_paths],
+                }
+            },
+        }
+    }
+    fpath = os.path.join(output_dir, "dataset_infos.json")
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(infos, f, ensure_ascii=False, indent=2, default=str)
+    print(f"  已保存 {fpath}")
+
+
+def save_indices_json(
+        output_dir: str,
+        dataset_name: str,
+        num_examples: int,
+        max_samples: Optional[int] = None,
+):
+    """保存 indices.json，记录样本顺序信息"""
+    indices_info = {
+        "dataset_name": dataset_name,
+        "order": "source_index_ascending",
+        "num_examples": num_examples,
+        "max_samples": max_samples,
+        "source_index_start": 0,
+        "source_index_end_exclusive": num_examples,
+    }
+    fpath = os.path.join(output_dir, "indices.json")
+    with open(fpath, "w", encoding="utf-8") as f:
+        json.dump(indices_info, f, indent=2)
+    print(f"  索引信息已保存: {fpath}")
 
 
 # ============================================================================
@@ -436,25 +453,51 @@ OMNIFACE_FIELDS = {
     "head_pose": {"type": "sequence_float", "length": 3},
 }
 
-OMNIFACE_SKIP_FIELDS = {"train_indices", "val_indices"}
+OMNIFACE_SKIP_FIELDS = {"train_indices", "val_indices", "test_indices"}
 OMNIFACE_BYTES_FIELDS = {"id", "origin", "prompt"}
 
 
-def build_omniface_batch(
+def check_omniface_fields(f: h5py.File):
+    """检查 OmniFace H5 文件中是否存在所有必需字段"""
+    missing_fields = []
+
+    if "images" not in f:
+        missing_fields.append("images")
+
+    for field in OMNIFACE_FIELDS.keys():
+        # image 是输出列，由 H5 的 images 转换得到
+        if field == "image":
+            continue
+        if field in OMNIFACE_SKIP_FIELDS:
+            continue
+        if field not in f:
+            missing_fields.append(field)
+
+    if missing_fields:
+        raise ValueError(f"OmniFace H5 文件缺少以下字段: {missing_fields}")
+
+
+def build_omniface_batch_from_slice(
         f: h5py.File,
-        idx_batch: np.ndarray,
+        start: int,
+        end: int,
         label_fields: List[str],
         image_mode: str,
         encoder: Optional[JPEGEncoder],
 ) -> Dict[str, list]:
+    """
+    从连续 slice 构造 OmniFace batch。
+    使用连续 slice 读取 H5，保证 gzip chunk 顺序读取性能。
+    """
     batch: Dict[str, list] = {}
 
     if image_mode == "jpeg_bytes":
-        jpeg_bytes = [bytes(f["images"][i]) for i in idx_batch]
+        img_vals = f["images"][start:end]
+        jpeg_bytes = [bytes(v) for v in img_vals]
     elif image_mode == "chw_uint8":
         if encoder is None:
             raise ValueError("OmniFace CHW 图像模式下 encoder 不能为空")
-        imgs_chw = f["images"][idx_batch]
+        imgs_chw = f["images"][start:end]
         jpeg_bytes = encoder.encode_chw_batch(imgs_chw)
     else:
         raise ValueError(f"未知 image_mode: {image_mode}")
@@ -464,7 +507,9 @@ def build_omniface_batch(
     for field in label_fields:
         if field in OMNIFACE_SKIP_FIELDS:
             continue
-        vals = f[field][idx_batch]
+        if field not in f:
+            continue
+        vals = f[field][start:end]
         if field in OMNIFACE_BYTES_FIELDS:
             batch[field] = [bytes_to_str(v) for v in vals]
         elif OMNIFACE_FIELDS[field]["type"].startswith("sequence_"):
@@ -481,16 +526,20 @@ def convert_omniface(
         max_shard_size_mb: int = 500,
         jpeg_quality: int = 95,
         workers: int = 1,
+        max_samples: Optional[int] = None,
+        overwrite: bool = False,
 ):
     print(f"\n{'=' * 60}")
     print(f"开始转换 OmniFace: {h5_path}")
     print(f"{'=' * 60}\n")
 
-    os.makedirs(output_dir, exist_ok=True)
+    prepare_output_dir(output_dir, overwrite=overwrite)
     features = build_features(OMNIFACE_FIELDS)
     label_fields = [k for k in OMNIFACE_FIELDS if k != "image"]
 
     with h5py.File(h5_path, "r") as f:
+        check_omniface_fields(f)
+
         images_ds = f["images"]
         image_mode = infer_image_storage_mode(images_ds)
         print(f"  images 存储模式: {image_mode}, shape={images_ds.shape}, dtype={images_ds.dtype}")
@@ -498,84 +547,59 @@ def convert_omniface(
         n_total = images_ds.shape[0]
         print(f"  数据集大小: {n_total:,}")
 
-        # 读取原始划分
-        train_idx_original = f["train_indices"][:]
-        val_idx_original = f["val_indices"][:]
-        print(f"  原始划分: train: {len(train_idx_original):,}, val: {len(val_idx_original):,}")
+        n_process = n_total if max_samples is None else min(max_samples, n_total)
+        if max_samples is not None:
+            print(f"  [限制样本数模式] 只处理前 {n_process:,} 个样本")
 
-        # 重新划分 val_idx_original 为 val 和 test (1/3 给 val, 2/3 给 test)
-        # 使用下标 %3 取余来判断
-        val_idx = val_idx_original[np.arange(len(val_idx_original)) % 3 == 0]
-        test_idx = val_idx_original[np.arange(len(val_idx_original)) % 3 != 0]
-        train_idx = train_idx_original
-        print(
-            f"  重新划分: train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
+        print(f"  使用 H5 原始顺序重打包，不排序、不 shuffle")
 
-        splits = {"train": train_idx, "val": val_idx, "test": test_idx}
-        splits_info = {}
-
-        # 保存划分信息
-        split_dict = {
-            "train": train_idx.tolist(),
-            "val": val_idx.tolist(),
-            "test": test_idx.tolist()
-        }
-        split_info_path = os.path.join(output_dir, "split_indices.json")
-        with open(split_info_path, "w") as f_split:
-            json.dump(split_dict, f_split)
-        print(f"  划分信息已保存: {split_info_path}")
+        h5_chunk0 = images_ds.chunks[0] if images_ds.chunks else 1024
+        batch_size = int(h5_chunk0 * 8)
+        print(f"  batch_size={batch_size} (H5 chunk={h5_chunk0})")
 
         with ManagedEncoder(workers=workers if image_mode == "chw_uint8" else 1,
                             quality=jpeg_quality) as encoder:
-            for split_name, indices in splits.items():
-                print(f"\n  --- 处理 {split_name} split ({len(indices):,} 样本) ---")
+            print(f"\n  --- 处理 all split ({n_process:,} 样本) ---")
 
-                # 与 H5 chunk 对齐
-                h5_chunk0 = images_ds.chunks[0] if images_ds.chunks else 1024
-                batch_size = int(h5_chunk0 * 8)
+            calib_n = min(batch_size, n_process)
+            calib_batch = build_omniface_batch_from_slice(
+                f=f,
+                start=0,
+                end=calib_n,
+                label_fields=label_fields,
+                image_mode=image_mode,
+                encoder=encoder if image_mode == "chw_uint8" else None,
+            )
+            planner = ApproxShardPlanner(target_mb=max_shard_size_mb)
+            examples_per_shard = planner.fit(calib_batch, min_examples=max(1024, batch_size))
+            print(f"  估计每 shard 约 {examples_per_shard:,} 样本")
 
-                calib_n = min(batch_size, len(indices))
-                calib_batch = build_omniface_batch(
+            writer = ShardWriter(
+                output_dir=output_dir,
+                split_name="all",
+                features=features,
+                total_samples=n_process,
+                examples_per_shard=examples_per_shard,
+            )
+
+            writer.add_batch(calib_batch)
+
+            for start in range(calib_n, n_process, batch_size):
+                end = min(start + batch_size, n_process)
+                batch = build_omniface_batch_from_slice(
                     f=f,
-                    idx_batch=indices[:calib_n],
+                    start=start,
+                    end=end,
                     label_fields=label_fields,
                     image_mode=image_mode,
                     encoder=encoder if image_mode == "chw_uint8" else None,
                 )
-                planner = ApproxShardPlanner(target_mb=max_shard_size_mb)
-                examples_per_shard = planner.fit(calib_batch, min_examples=max(1024, batch_size))
-                print(f"  估计每 shard 约 {examples_per_shard:,} 样本")
+                writer.add_batch(batch)
 
-                writer = ShardWriter(
-                    output_dir=output_dir,
-                    split_name=split_name,
-                    features=features,
-                    total_samples=len(indices),
-                    examples_per_shard=examples_per_shard,
-                )
+            shard_paths = writer.close()
 
-                writer.add_batch(calib_batch)
-
-                for start in range(calib_n, len(indices), batch_size):
-                    end = min(start + batch_size, len(indices))
-                    idx_batch = indices[start:end]
-                    batch = build_omniface_batch(
-                        f=f,
-                        idx_batch=idx_batch,
-                        label_fields=label_fields,
-                        image_mode=image_mode,
-                        encoder=encoder if image_mode == "chw_uint8" else None,
-                    )
-                    writer.add_batch(batch)
-
-                shard_paths = writer.close()
-                splits_info[split_name] = {
-                    "num_examples": len(indices),
-                    "num_shards": len(shard_paths),
-                    "shard_names": [os.path.basename(p) for p in shard_paths],
-                }
-
-    save_dataset_infos(output_dir, "OmniFace", features, splits_info)
+    save_indices_json(output_dir, "OmniFace", n_process, max_samples)
+    save_dataset_infos(output_dir, "OmniFace", features, n_process, shard_paths)
     print(f"\n  OmniFace 转换完成! 输出目录: {output_dir}")
 
 
@@ -585,6 +609,7 @@ def convert_omniface(
 
 OMNISHAPE_FIELDS = {
     "image": {"type": "image"},
+    "source_index": {"type": "int64"},
     "model_id": {"type": "string"},
     "class": {"type": "int32"},
     "class100": {"type": "int32"},
@@ -607,90 +632,50 @@ OMNISHAPE_FIELDS = {
 
 OMNISHAPE_BYTES_FIELDS = {"model_id"}
 
-OMNISHAPE_META_FIELDS = {
-    "model_id": {"type": "string"},
-    "model_name": {"type": "string"},
-    "class_id": {"type": "string"},
-    "class_name": {"type": "string"},
-    "class100_id": {"type": "string"},
-    "class100_name": {"type": "string"},
-    "model_anisotropy": {"type": "float32"},
-    "model_hull_volume": {"type": "float32"},
-    "model_mat_complexity": {"type": "float32"},
-    "model_mat_count": {"type": "int32"},
-    "model_mat_slots": {"type": "int32"},
-    "model_surface_area_ratio": {"type": "float32"},
-    "model_vert_count": {"type": "int32"},
-    "model_volume": {"type": "float32"},
-    "model_volume_ratio": {"type": "float32"},
-    "model_xyz_size": {"type": "sequence_float", "length": 3},
-}
+
+def check_omnishape_fields(f: h5py.File):
+    """检查 OmniShape H5 文件中是否存在所有必需字段"""
+    missing_fields = []
+
+    if "images" not in f:
+        missing_fields.append("images")
+
+    for field in OMNISHAPE_FIELDS.keys():
+        # image 是输出列，由 H5 的 images 转换得到；source_index 是转换时生成的
+        if field in {"image", "source_index"}:
+            continue
+        if field not in f:
+            missing_fields.append(field)
+
+    if missing_fields:
+        raise ValueError(f"OmniShape H5 文件缺少以下字段: {missing_fields}")
 
 
-def _split_omnishape_indices(
+def build_omnishape_batch_from_slice(
         f: h5py.File,
-        val_ratio: float = 0.01,
-        test_ratio: float = 0.02,
-        seed: int = 42,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """按 class 分桶，桶内按 model_id 不重叠划分 train/val/test."""
-    rng = np.random.RandomState(seed)
-    all_model_ids = f["model_id"][:]
-    all_classes = f["class"][:]
-
-    # 获取每个 model_id 对应的 class
-    unique_ids, first_indices = np.unique(all_model_ids, return_index=True)
-    unique_ids = unique_ids[np.argsort(first_indices)]
-    unique_classes = all_classes[first_indices]
-
-    # 按 class 分桶
-    class_buckets = defaultdict(list)
-    for model_id, cls in zip(unique_ids, unique_classes):
-        class_buckets[cls].append(model_id)
-
-    # 在每个 class 桶内划分
-    val_model_ids = []
-    test_model_ids = []
-    train_model_ids = []
-
-    for cls in class_buckets:
-        bucket_model_ids = class_buckets[cls]
-        rng.shuffle(bucket_model_ids)
-
-        n_total = len(bucket_model_ids)
-        n_val = int(n_total * val_ratio)  # 向下取整
-        n_test = int(n_total * test_ratio)  # 向下取整
-
-        val_model_ids.extend(bucket_model_ids[:n_val])
-        test_model_ids.extend(bucket_model_ids[n_val:n_val + n_test])
-        train_model_ids.extend(bucket_model_ids[n_val + n_test:])
-
-    # C 侧向量化 membership, 比 Python 字典/循环更快
-    is_val = np.isin(all_model_ids, val_model_ids)
-    is_test = np.isin(all_model_ids, test_model_ids)
-    is_train = ~is_val & ~is_test
-
-    val_indices = np.where(is_val)[0].astype(np.int32)
-    test_indices = np.where(is_test)[0].astype(np.int32)
-    train_indices = np.where(is_train)[0].astype(np.int32)
-
-    return train_indices, val_indices, test_indices
-
-
-def build_omnishape_batch(
-        f: h5py.File,
-        idx_batch: np.ndarray,
+        start: int,
+        end: int,
         label_fields: List[str],
         encoder: JPEGEncoder,
 ) -> Dict[str, list]:
+    """
+    从连续 slice 构造 OmniShape batch。
+    使用连续 slice 读取 H5，保证 gzip chunk 顺序读取性能。
+    """
     batch: Dict[str, list] = {}
 
-    imgs_chw = f["images"][idx_batch]
+    imgs_chw = f["images"][start:end]
     jpeg_bytes = encoder.encode_chw_batch(imgs_chw)
     batch["image"] = image_dicts_from_jpeg_bytes_list(jpeg_bytes)
 
+    batch["source_index"] = list(range(start, end))
+
     for field in label_fields:
-        vals = f[field][idx_batch]
+        if field == "source_index":
+            continue
+        if field not in f:
+            continue
+        vals = f[field][start:end]
         if field in OMNISHAPE_BYTES_FIELDS:
             batch[field] = [bytes_to_str(v) for v in vals]
         elif OMNISHAPE_FIELDS[field]["type"].startswith("sequence_"):
@@ -702,45 +687,122 @@ def build_omnishape_batch(
 
 
 def save_omnishape_meta(f: h5py.File, output_dir: str):
-    print(f"\n  --- 保存 meta/ 子组 ---")
-    meta_features = build_features(OMNISHAPE_META_FIELDS)
-    meta_batch: Dict[str, list] = {}
-    meta_bytes_fields = {"model_id", "class_id", "class100_id"}
-    meta_object_fields = {"model_name", "class_name", "class100_name"}
+    """
+    自动遍历 H5 中 /meta group 的所有字段并保存。
+    如果字段长度一致，保存为 meta.parquet。
+    否则，按长度分组保存为多个 parquet 文件。
+    """
+    print(f"\n  --- 保存 meta 子组 ---")
 
-    # 读取所有字段并检查长度一致性
-    field_lengths = {}
-    for field, cfg in OMNISHAPE_META_FIELDS.items():
-        vals = f[f"meta/{field}"][:]
-        field_lengths[field] = len(vals)
+    if "meta" not in f:
+        print("  [WARNING] H5 文件中不存在 /meta group，跳过 meta 保存")
+        return
 
-    # 检查所有字段长度是否一致
-    lengths = list(field_lengths.values())
-    if len(set(lengths)) > 1:
-        print(f"  [警告] meta 字段长度不一致: {field_lengths}")
-        # 使用最小长度作为基准
-        min_length = min(lengths)
-        print(f"  [警告] 使用最小长度 {min_length} 作为基准")
-    else:
-        min_length = lengths[0]
+    meta_group = f["meta"]
+    meta_fields = list(meta_group.keys())
 
-    # 重新读取并截断到最小长度
-    for field, cfg in OMNISHAPE_META_FIELDS.items():
-        vals = f[f"meta/{field}"][:min_length]
-        if field in meta_bytes_fields:
-            meta_batch[field] = [bytes_to_str(v) for v in vals]
-        elif field in meta_object_fields:
-            meta_batch[field] = [bytes_to_str(v) if isinstance(v, (bytes, np.bytes_)) else str(v)
-                                 for v in vals]
-        elif cfg["type"].startswith("sequence_"):
-            meta_batch[field] = [v.tolist() for v in vals]
-        else:
-            meta_batch[field] = vals.tolist()
+    if not meta_fields:
+        print("  [WARNING] /meta group 为空，跳过 meta 保存")
+        return
 
-    meta_ds = Dataset.from_dict(meta_batch, features=meta_features)
-    meta_fpath = os.path.join(output_dir, "meta.parquet")
-    meta_ds.to_parquet(meta_fpath)
-    print(f"  meta 已保存: {meta_fpath} ({len(next(iter(meta_batch.values()))):,} 条)")
+    print(f"  发现 meta 字段: {meta_fields}")
+
+    field_info = {}
+    for field in meta_fields:
+        ds = meta_group[field]
+        shape = ds.shape
+        dtype = str(ds.dtype)
+        field_info[field] = {
+            "shape": list(shape),
+            "dtype": dtype,
+            "length": shape[0] if len(shape) > 0 else 0,
+        }
+
+    length_groups = {}
+    for field, info in field_info.items():
+        length = info["length"]
+        if length not in length_groups:
+            length_groups[length] = []
+        length_groups[length].append(field)
+
+    print(f"  字段长度分组: {dict((k, len(v)) for k, v in length_groups.items())}")
+
+    meta_dir = os.path.join(output_dir, "meta")
+    os.makedirs(meta_dir, exist_ok=True)
+
+    saved_files = []
+
+    for length, fields in length_groups.items():
+        if length == 0:
+            print(f"  [WARNING] 跳过长度为 0 的字段: {fields}")
+            continue
+
+        group_name = f"meta_l{length}"
+        batch = {}
+
+        for field in fields:
+            ds = meta_group[field]
+            vals = ds[:]
+
+            if ds.dtype.kind == 'S' or ds.dtype.kind == 'O':
+                if len(vals.shape) == 1:
+                    batch[field] = [bytes_to_str(v) for v in vals]
+                else:
+                    batch[field] = [bytes_to_str(v) if isinstance(v, (bytes, np.bytes_)) else str(v)
+                                    for v in vals]
+            elif len(vals.shape) > 1:
+                batch[field] = [v.tolist() for v in vals]
+            else:
+                batch[field] = vals.tolist()
+
+        meta_ds = Dataset.from_dict(batch)
+        meta_fpath = os.path.join(meta_dir, f"{group_name}.parquet")
+        meta_ds.to_parquet(meta_fpath)
+        saved_files.append(meta_fpath)
+        print(f"  已保存: {meta_fpath} ({length:,} 条, {len(fields)} 个字段)")
+
+    meta_schema = {
+        "fields": field_info,
+        "length_groups": {str(k): v for k, v in length_groups.items()},
+    }
+    schema_fpath = os.path.join(meta_dir, "meta_schema.json")
+    with open(schema_fpath, "w", encoding="utf-8") as sf:
+        json.dump(meta_schema, sf, indent=2)
+    print(f"  已保存 meta_schema.json")
+
+
+def load_omnishape_meta(output_dir: str, as_pandas: bool = False) -> Union[
+    Dataset, Dict[str, "pd.DataFrame"]]:
+    """
+    读取 OmniShape meta 数据。
+
+    Args:
+        output_dir: 输出目录
+        as_pandas: 是否返回 pandas DataFrame，默认返回 datasets.Dataset
+
+    Returns:
+        如果 as_pandas=False，返回 dict[str, Dataset]
+        如果 as_pandas=True，返回 dict[str, pd.DataFrame]
+    """
+    meta_dir = os.path.join(output_dir, "meta")
+
+    if not os.path.exists(meta_dir):
+        raise FileNotFoundError(f"meta 目录不存在: {meta_dir}")
+
+    from datasets import load_dataset
+
+    result = {}
+    for fname in os.listdir(meta_dir):
+        if fname.endswith(".parquet") and fname.startswith("meta_"):
+            fpath = os.path.join(meta_dir, fname)
+            ds = load_dataset("parquet", data_files=fpath, split="train")
+            key = fname.replace(".parquet", "")
+            if as_pandas:
+                result[key] = ds.to_pandas()
+            else:
+                result[key] = ds
+
+    return result
 
 
 def convert_omnishape(
@@ -748,25 +810,26 @@ def convert_omnishape(
         output_dir: str,
         max_shard_size_mb: int = 500,
         jpeg_quality: int = 95,
-        val_ratio: float = 0.01,
-        test_ratio: float = 0.02,
-        seed: int = 42,
         workers: int = 16,
-        max_samples: int = None,
+        max_samples: Optional[int] = None,
+        overwrite: bool = False,
 ):
     print(f"\n{'=' * 60}")
     print(f"开始转换 OmniShape: {h5_path}")
     print(f"{'=' * 60}\n")
 
-    os.makedirs(output_dir, exist_ok=True)
+    prepare_output_dir(output_dir, overwrite=overwrite)
     features = build_features(OMNISHAPE_FIELDS)
     label_fields = [k for k in OMNISHAPE_FIELDS if k != "image"]
 
     with h5py.File(h5_path, "r") as f:
+        check_omnishape_fields(f)
+
         images_ds = f["images"]
         if images_ds.ndim != 4 or images_ds.shape[1] != 3 or images_ds.dtype != np.uint8:
             raise ValueError(
-                f"OmniShape images 期望为 uint8 CHW, 实际 shape={images_ds.shape}, dtype={images_ds.dtype}")
+                f"OmniShape images 期望 uint8 CHW, 实际 shape={images_ds.shape}, dtype={images_ds.dtype}"
+            )
 
         n_total = images_ds.shape[0]
         print(f"  数据集大小: {n_total:,}")
@@ -774,90 +837,58 @@ def convert_omnishape(
             f"  images shape={images_ds.shape}, chunks={images_ds.chunks}, dtype={images_ds.dtype}")
         print(f"  JPEG quality={jpeg_quality}, workers={workers}")
 
-        print(
-            f"  按 class 分桶，桶内按 model_id 划分 train/val/test (val_ratio={val_ratio}, test_ratio={test_ratio}, seed={seed})...")
-        train_idx, val_idx, test_idx = _split_omnishape_indices(f, val_ratio, test_ratio, seed)
-
-        # 限制最大样本数
+        n_process = n_total if max_samples is None else min(max_samples, n_total)
         if max_samples is not None:
-            print(f"  [限制样本数模式] 只处理前 {max_samples:,} 个样本")
-            train_idx = train_idx[:max_samples]
-            val_idx = val_idx[:max_samples]
-            test_idx = test_idx[:max_samples]
-            print(
-                f"  限制后 - train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
-        else:
-            print(f"  train: {len(train_idx):,}, val: {len(val_idx):,}, test: {len(test_idx):,}")
+            print(f"  [限制样本数模式] 只处理前 {n_process:,} 个样本")
 
-        split_info = {
-            "seed": seed,
-            "val_ratio": val_ratio,
-            "test_ratio": test_ratio,
-            "train_count": int(len(train_idx)),
-            "val_count": int(len(val_idx)),
-            "test_count": int(len(test_idx)),
-            "max_samples": max_samples,
-            "train_indices": train_idx.tolist(),
-            "val_indices": val_idx.tolist(),
-            "test_indices": test_idx.tolist(),
-        }
-        split_fpath = os.path.join(output_dir, "split_indices.json")
-        with open(split_fpath, "w", encoding="utf-8") as sf:
-            json.dump(split_info, sf, indent=2)
-        print(f"  划分信息已保存: {split_fpath}")
-
-        splits = {"train": train_idx, "val": val_idx, "test": test_idx}
-        splits_info = {}
+        print(f"  使用 H5 source_index 原始顺序重打包，不排序、不 shuffle")
 
         h5_chunk0 = images_ds.chunks[0] if images_ds.chunks else 1365
         batch_size = int(h5_chunk0 * 8)
+        print(f"  batch_size={batch_size} (H5 chunk={h5_chunk0})")
 
         with ManagedEncoder(workers=workers, quality=jpeg_quality) as encoder:
-            for split_name, indices in splits.items():
-                print(f"\n  --- 处理 {split_name} split ({len(indices):,} 样本) ---")
+            print(f"\n  --- 处理 all split ({n_process:,} 样本) ---")
 
-                calib_n = min(batch_size, len(indices))
-                calib_batch = build_omnishape_batch(
+            calib_n = min(batch_size, n_process)
+            calib_batch = build_omnishape_batch_from_slice(
+                f=f,
+                start=0,
+                end=calib_n,
+                label_fields=label_fields,
+                encoder=encoder,
+            )
+            planner = ApproxShardPlanner(target_mb=max_shard_size_mb)
+            examples_per_shard = planner.fit(calib_batch, min_examples=max(batch_size, 2048))
+            print(f"  估计每 shard 约 {examples_per_shard:,} 样本")
+
+            writer = ShardWriter(
+                output_dir=output_dir,
+                split_name="all",
+                features=features,
+                total_samples=n_process,
+                examples_per_shard=examples_per_shard,
+            )
+
+            writer.add_batch(calib_batch)
+
+            for start in range(calib_n, n_process, batch_size):
+                end = min(start + batch_size, n_process)
+                batch = build_omnishape_batch_from_slice(
                     f=f,
-                    idx_batch=indices[:calib_n],
+                    start=start,
+                    end=end,
                     label_fields=label_fields,
                     encoder=encoder,
                 )
-                planner = ApproxShardPlanner(target_mb=max_shard_size_mb)
-                examples_per_shard = planner.fit(calib_batch, min_examples=max(batch_size, 2048))
-                print(f"  估计每 shard 约 {examples_per_shard:,} 样本")
+                writer.add_batch(batch)
 
-                writer = ShardWriter(
-                    output_dir=output_dir,
-                    split_name=split_name,
-                    features=features,
-                    total_samples=len(indices),
-                    examples_per_shard=examples_per_shard,
-                )
-
-                writer.add_batch(calib_batch)
-
-                for start in range(calib_n, len(indices), batch_size):
-                    end = min(start + batch_size, len(indices))
-                    idx_batch = indices[start:end]
-                    batch = build_omnishape_batch(
-                        f=f,
-                        idx_batch=idx_batch,
-                        label_fields=label_fields,
-                        encoder=encoder,
-                    )
-                    writer.add_batch(batch)
-
-                shard_paths = writer.close()
-                splits_info[split_name] = {
-                    "num_examples": len(indices),
-                    "num_shards": len(shard_paths),
-                    "shard_names": [os.path.basename(p) for p in shard_paths],
-                }
+            shard_paths = writer.close()
 
         save_omnishape_meta(f, output_dir)
 
-    save_dataset_infos(output_dir, "OmniShape", features, splits_info)
+    save_indices_json(output_dir, "OmniShape", n_process, max_samples)
+    save_dataset_infos(output_dir, "OmniShape", features, n_process, shard_paths)
     print(f"\n  OmniShape 转换完成! 输出目录: {output_dir}")
 
 
@@ -877,58 +908,138 @@ def verify_conversion(
     print(f"{'=' * 60}\n")
 
     data_dir = os.path.join(output_dir, "data")
-    parquet_files = sorted(
-        [os.path.join(data_dir, x) for x in os.listdir(data_dir) if x.endswith(".parquet")]
-    )
-    if not parquet_files:
-        print("  [ERROR] 未找到 parquet 文件!")
+
+    if not os.path.exists(data_dir):
+        print(f"  [ERROR] data 目录不存在: {data_dir}")
         return
 
-    split_files = defaultdict(list)
-    for fpath in parquet_files:
-        split_name = os.path.basename(fpath).split("-")[0]
-        split_files[split_name].append(fpath)
+    old_parquet_files = [
+        x for x in os.listdir(data_dir)
+        if (x.startswith("train-") or x.startswith("val-") or x.startswith("test-")) and x.endswith(
+            ".parquet")
+    ]
+    if old_parquet_files:
+        print(f"  [ERROR] 发现旧的 train/val/test parquet 文件，请重新转换！")
+        print(f"  旧文件: {old_parquet_files[:5]}")
+        return
 
-    total_parquet = 0
-    for split_name, files in split_files.items():
-        print(f"  --- {split_name} ({len(files)} 个分片) ---")
-        ds = load_dataset("parquet", data_files=files, split="train")
-        total_parquet += len(ds)
-        print(f"    样本数: {len(ds):,}")
-        print(f"    字段: {list(ds.features.keys())}")
-        print(f"    Features: {ds.features}")
+    parquet_files = sorted([
+        os.path.join(data_dir, x)
+        for x in os.listdir(data_dir)
+        if x.startswith("all-") and x.endswith(".parquet")
+    ])
+    if not parquet_files:
+        print("  [ERROR] 未找到 all-*.parquet 文件!")
+        return
 
-        sample = ds[0]
-        img = sample["image"]
-        print(f"    图片类型: {type(img)}")
-        if hasattr(img, "size"):
-            print(f"    图片尺寸: {img.size}")
-        for j, k in enumerate(sample.keys()):
-            if k == "image":
-                continue
-            v = sample[k]
-            vr = repr(v)
-            if len(vr) > 80:
-                vr = vr[:80] + "..."
-            print(f"      {k}: {vr}")
-            if j >= 10:
-                break
+    indices_path = os.path.join(output_dir, "indices.json")
+    indices_info = None
+    expected_n = None
 
-    print(f"\n  --- 与 H5 源文件对比 ---")
+    if os.path.exists(indices_path):
+        with open(indices_path, "r", encoding="utf-8") as f:
+            indices_info = json.load(f)
+            expected_n = indices_info["num_examples"]
+            print(
+                f"  读取到 indices.json: order={indices_info['order']}, num_examples={expected_n:,}")
+    else:
+        print(f"  [WARNING] 未找到 indices.json")
+
     with h5py.File(h5_path, "r") as f:
         h5_n = int(f["images"].shape[0])
-        print(f"    H5 源样本数: {h5_n:,}")
-    print(f"    Parquet 总样本数: {total_parquet:,}")
-    if h5_n == total_parquet:
-        print("    ✓ 样本数一致!")
-    else:
-        print(f"    ✗ 样本数不一致! 差异: {h5_n - total_parquet:,}")
+        print(f"  H5 源样本数: {h5_n:,}")
 
-    meta_path = os.path.join(output_dir, "meta.parquet")
-    if os.path.exists(meta_path):
-        print(f"    发现 meta: {meta_path}")
+    if expected_n is None:
+        expected_n = h5_n
 
-    print("\n  验证完成!")
+    print(f"\n  --- 读取 parquet 文件 ---")
+    print(f"  读取 {len(parquet_files)} 个 parquet 分片...")
+    ds = load_dataset("parquet", data_files=parquet_files, split="train")
+    total_parquet = len(ds)
+    print(f"  Parquet 总样本数: {total_parquet:,}")
+
+    if total_parquet != expected_n:
+        print(f"  [ERROR] 样本数不匹配: expected={expected_n}, actual={total_parquet}")
+        return
+    print(f"  ✓ 样本数匹配!")
+
+    print(f"\n  --- 校验样本顺序 ---")
+    num_check_samples = min(5, expected_n)
+
+    with h5py.File(h5_path, "r") as f:
+        if dataset_name == "OmniFace":
+            expected_ids = [bytes_to_str(f["id"][i]) for i in range(num_check_samples)]
+            actual_ids = [ds[i]["id"] for i in range(num_check_samples)]
+            if expected_ids == actual_ids:
+                print(f"  ✓ OmniFace 前 {num_check_samples} 个 id 匹配!")
+            else:
+                print(f"  [ERROR] OmniFace id 不匹配!")
+                print(f"    expected: {expected_ids}")
+                print(f"    actual: {actual_ids}")
+                return
+
+        elif dataset_name == "OmniShape":
+            expected_model_ids = [bytes_to_str(f["model_id"][i]) for i in range(num_check_samples)]
+            expected_classes = [int(f["class"][i]) for i in range(num_check_samples)]
+            expected_class100s = [int(f["class100"][i]) for i in range(num_check_samples)]
+            expected_view_labels = f["view_label"][:num_check_samples].tolist()
+
+            actual_model_ids = [ds[i]["model_id"] for i in range(num_check_samples)]
+            actual_classes = [ds[i]["class"] for i in range(num_check_samples)]
+            actual_class100s = [ds[i]["class100"] for i in range(num_check_samples)]
+            actual_view_labels = [ds[i]["view_label"] for i in range(num_check_samples)]
+
+            if expected_model_ids != actual_model_ids:
+                print(f"  [ERROR] OmniShape model_id 不匹配!")
+                return
+            if expected_classes != actual_classes:
+                print(f"  [ERROR] OmniShape class 不匹配!")
+                return
+            if expected_class100s != actual_class100s:
+                print(f"  [ERROR] OmniShape class100 不匹配!")
+                return
+            if not np.allclose(expected_view_labels, actual_view_labels, atol=1e-6):
+                print(f"  [ERROR] OmniShape view_label 不匹配!")
+                return
+
+            print(f"  ✓ OmniShape 前 {num_check_samples} 个样本字段匹配!")
+
+            if "source_index" in ds.features:
+                expected_source_indices = list(range(num_check_samples))
+                actual_source_indices = [ds[i]["source_index"] for i in range(num_check_samples)]
+                if expected_source_indices == actual_source_indices:
+                    print(f"  ✓ source_index 字段正确!")
+                else:
+                    print(
+                        f"  [WARNING] source_index 不匹配: expected={expected_source_indices}, actual={actual_source_indices}")
+
+    print(f"\n  --- 数据集信息 ---")
+    print(f"  字段: {list(ds.features.keys())}")
+
+    sample = ds[0]
+    img = sample["image"]
+    print(f"  图片类型: {type(img)}")
+    if hasattr(img, "size"):
+        print(f"  图片尺寸: {img.size}")
+
+    for j, k in enumerate(sample.keys()):
+        if k == "image":
+            continue
+        v = sample[k]
+        vr = repr(v)
+        if len(vr) > 80:
+            vr = vr[:80] + "..."
+        print(f"    {k}: {vr}")
+        if j >= 10:
+            break
+
+    meta_dir = os.path.join(output_dir, "meta")
+    if os.path.exists(meta_dir):
+        meta_files = [f for f in os.listdir(meta_dir) if f.endswith(".parquet")]
+        print(f"\n  发现 meta 目录: {meta_dir}")
+        print(f"  meta 文件: {meta_files}")
+
+    print(f"\n  ✓ 验证完成! 所有检查通过!")
 
 
 # ============================================================================
@@ -937,7 +1048,7 @@ def verify_conversion(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="H5 -> HuggingFace Datasets (Parquet) 转换工具",
+        description="H5 -> HuggingFace Datasets (Parquet) 转换工具（只输出 all split）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
@@ -961,24 +1072,6 @@ def main():
         help="JPEG 编码质量 (OmniShape 必用, OmniFace CHW 模式下也会使用), 默认 95",
     )
     parser.add_argument(
-        "--val-ratio",
-        type=float,
-        default=0.01,
-        help="OmniShape val 集比例, 默认 0.01",
-    )
-    parser.add_argument(
-        "--test-ratio",
-        type=float,
-        default=0.02,
-        help="OmniShape test 集比例, 默认 0.02",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=42,
-        help="随机种子 (OmniShape 划分使用), 默认 42",
-    )
-    parser.add_argument(
         "--verify",
         action="store_true",
         help="验证模式: 读取转换后的 parquet 并与 h5 对比",
@@ -993,7 +1086,12 @@ def main():
         "--max-samples",
         type=int,
         default=None,
-        help="限制处理的最大样本数，例如100000",
+        help="限制处理的最大样本数（全局前 N 条）",
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="覆盖已存在的输出目录",
     )
 
     args = parser.parse_args()
@@ -1010,6 +1108,8 @@ def main():
             max_shard_size_mb=args.shard_size,
             jpeg_quality=args.jpeg_quality,
             workers=args.workers,
+            max_samples=args.max_samples,
+            overwrite=args.overwrite,
         )
     else:
         convert_omnishape(
@@ -1017,11 +1117,9 @@ def main():
             output_dir=args.output,
             max_shard_size_mb=args.shard_size,
             jpeg_quality=args.jpeg_quality,
-            val_ratio=args.val_ratio,
-            test_ratio=args.test_ratio,
-            seed=args.seed,
             workers=args.workers,
             max_samples=args.max_samples,
+            overwrite=args.overwrite,
         )
 
 

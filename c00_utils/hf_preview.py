@@ -9,13 +9,23 @@ HuggingFace 数据集预览工具
 =============================
 功能对标 h5_preview.py, 但输入是 HF 数据集文件夹 (含多个 parquet 分片).
 
-用法,替换下面的脚本入参中的dataset_dir为(默认val,因为可以缓存用的少点):
-/home/cy/datasets/imagenet-1k
-/home/data/HF/OmniFace512
-/home/data/HF/OmniFace64
-/home/data/HF/OmniShape128
-/home/data/HF/OmniShape64
-/home/data/HF/OmniShape128_test
+用法:
+cd /home/cy/nuist-lab/cfs-code-lab/c00_utils
+
+# OmniFace
+python hf_preview.py /home/data/HF/OmniFace64-V1_20260430
+python hf_preview.py /home/data/HF/OmniFace512-V1_20260430
+
+# OmniShape
+python hf_preview.py /home/data/HF/OmniShape64-V1_20260430
+python hf_preview.py /home/data/HF/OmniShape128-V1_20260430
+python hf_preview.py /home/data/HF/OmniShape128-V1_test
+
+# 指定标签字段
+python hf_preview.py /home/data/HF/OmniFace64-V1_20260430 --label-fields age,origin
+
+# 指定数量
+python hf_preview.py /home/data/HF/OmniShape128-V1_20260430 -n 20
 """
 
 import argparse
@@ -36,12 +46,12 @@ from datasets import load_dataset, Image as HFImage, Sequence, Value, ClassLabel
 def main():
     parser = argparse.ArgumentParser(description="HuggingFace 数据集预览工具",
                                      formatter_class=argparse.RawDescriptionHelpFormatter, )
-    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace512",
+    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace64-V1_20260430",
                         help="数据集文件夹路径")
     parser.add_argument("--label-fields", type=str, default=None,
                         help="手动指定显示的标签字段 (逗号分隔, 默认自动选择)", )
     parser.add_argument("--num", "-n", type=int, default=10, help="抽取数量 (默认 10)")
-    parser.add_argument("--split", type=str, default="val", help="指定 split")
+    parser.add_argument("--split", type=str, default="all", help="指定 split")
 
     args = parser.parse_args()
 
@@ -72,7 +82,7 @@ def scan_splits(dataset_dir: str) -> dict:
     if not parquet_files:
         return {}
 
-    split_pattern = re.compile(r"^(train|validation|val|test|dev|training|eval)-\d+")
+    split_pattern = re.compile(r"^(all|train|validation|val|test|dev|training|eval)-\d+")
     splits = defaultdict(list)
 
     for fname in parquet_files:

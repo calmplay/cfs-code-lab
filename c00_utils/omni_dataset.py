@@ -16,7 +16,7 @@
 6. 支持 train/val/test 三种 split
 
 使用示例:
-from h5hf_omni_dataset import OmniDataset
+from omni_dataset import OmniDataset
 
 # 自动检测格式创建数据集（必须指定 split）
 train_dataset = OmniDataset(
