@@ -30,7 +30,7 @@ python c00_utils/h5_read_test.py \
 python c00_utils/h5_read_test.py \
     --input /home/data/OmniShape64-V1_20260421.h5 \
     --datasource OmniShape \
-    --size 128 \
+    --size 64 \
     --batch_size 128 \
     --num_batches 100 \
     --num_workers 12
