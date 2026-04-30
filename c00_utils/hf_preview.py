@@ -46,7 +46,7 @@ from datasets import load_dataset, Image as HFImage, Sequence, Value, ClassLabel
 def main():
     parser = argparse.ArgumentParser(description="HuggingFace 数据集预览工具",
                                      formatter_class=argparse.RawDescriptionHelpFormatter, )
-    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniFace64-V1_20260430",
+    parser.add_argument("dataset_dir", type=str, nargs="?", default="/home/data/HF/OmniShape64-V1_20260430",
                         help="数据集文件夹路径")
     parser.add_argument("--label-fields", type=str, default=None,
                         help="手动指定显示的标签字段 (逗号分隔, 默认自动选择)", )
@@ -199,13 +199,16 @@ def preview_dataset(
         sys.exit(1)
 
     # 智能选择标签字段
+    dataset_name = os.path.basename(os.path.normpath(dataset_dir))
+    is_omnishape = dataset_name.startswith("OmniShape")
+    is_omniface = dataset_name.startswith("OmniFace")
+    
     if label_fields is None:
-        dataset_name = os.path.basename(os.path.normpath(dataset_dir))
-        if dataset_name.startswith("OmniShape"):
-            if "model_id" in ds.features:
-                label_fields = ["model_id"]
-                print(f"自动选择: OmniShape 数据集, 使用标签: model_id", file=sys.stderr)
-        elif dataset_name.startswith("OmniFace"):
+        if is_omnishape:
+            if "view_label" in ds.features:
+                label_fields = ["view_label"]
+                print(f"自动选择: OmniShape 数据集, 使用标签: view_label (pitch_yaw)", file=sys.stderr)
+        elif is_omniface:
             if "age" in ds.features:
                 label_fields = ["age"]
                 print(f"自动选择: OmniFace 数据集, 使用标签: age", file=sys.stderr)
@@ -220,6 +223,15 @@ def preview_dataset(
 
     # 随机采样
     idxs = random.sample(range(N), min(num, N))
+    
+    # OmniFace: 打印每个样本的 prompt
+    if is_omniface:
+        print("\n=== OmniFace Prompts ===", file=sys.stderr)
+        for idx in idxs:
+            sample = ds[idx]
+            prompt = sample.get("prompt", "<no prompt>")
+            print(f"[{idx}] {prompt}", file=sys.stderr)
+        print("========================\n", file=sys.stderr)
 
     # 可视化
     cols = min(num, 5)
@@ -235,13 +247,23 @@ def preview_dataset(
         plt.imshow(img)
 
         # title: 标签字段值
-        title_parts = []
-        for lf in label_fields:
-            if lf in sample:
-                val = sample[lf]
-                feat = ds.features[lf]
-                title_parts.append(format_label_value(val, feat))
-        plt.title("\n".join(title_parts) if title_parts else "", fontsize=8)
+        if is_omnishape and "view_label" in sample:
+            view_label = sample["view_label"]
+            if isinstance(view_label, (list, tuple)) and len(view_label) >= 3:
+                pitch = round(float(view_label[1]), 1)
+                yaw = round(float(view_label[2]), 1)
+                title = f"{pitch}_{yaw}"
+            else:
+                title = str(view_label)
+            plt.title(title, fontsize=14)
+        else:
+            title_parts = []
+            for lf in label_fields:
+                if lf in sample:
+                    val = sample[lf]
+                    feat = ds.features[lf]
+                    title_parts.append(format_label_value(val, feat))
+            plt.title("\n".join(title_parts) if title_parts else "", fontsize=14)
         plt.axis("off")
 
     plt.tight_layout()
