@@ -19,7 +19,7 @@ cd /home/cy/nuist-lab/cfs-code-lab
 
 # 测试 ImageNet-1k (与 OmniFace 512x512 对比)
 python c00_utils/hf_read_test.py \
-    --input /home/cy/datasets/imagenet-1k \
+    --input /home/data/HF/imagenet-1k \
     --datasource ImageNet \
     --size 512 \
     --batch_size 128 \
@@ -37,7 +37,7 @@ python c00_utils/hf_read_test.py \
 
 # 测试 OmniFace (64x64)
 python c00_utils/hf_read_test.py \
-    --input /home/data/HF/OmniFace64 \
+    --input /mhd/home/data/HF/OmniFace64 \
     --datasource OmniFace \
     --size 64 \
     --batch_size 128 \
@@ -88,7 +88,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms
 from tqdm import tqdm
 
-from h5hf_omni_dataset import OmniDataset
+from omni_dataset import OmniDataset
 
 
 class ImageNetDataset(Dataset):
