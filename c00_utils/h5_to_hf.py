@@ -400,6 +400,7 @@ def save_indices_json(
 
 OMNIFACE_FIELDS = {
     "image": {"type": "image"},
+    "source_index": {"type": "int64"},
     "id": {"type": "string"},
     "origin": {"type": "string"},
     "prompt": {"type": "string"},
@@ -465,8 +466,8 @@ def check_omniface_fields(f: h5py.File):
         missing_fields.append("images")
 
     for field in OMNIFACE_FIELDS.keys():
-        # image 是输出列，由 H5 的 images 转换得到
-        if field == "image":
+        # image 是输出列，由 H5 的 images 转换得到；source_index 是转换时生成的
+        if field in {"image", "source_index"}:
             continue
         if field in OMNIFACE_SKIP_FIELDS:
             continue
@@ -504,8 +505,12 @@ def build_omniface_batch_from_slice(
 
     batch["image"] = image_dicts_from_jpeg_bytes_list(jpeg_bytes)
 
+    batch["source_index"] = list(range(start, end))
+
     for field in label_fields:
         if field in OMNIFACE_SKIP_FIELDS:
+            continue
+        if field == "source_index":
             continue
         if field not in f:
             continue
@@ -977,6 +982,15 @@ def verify_conversion(
                 print(f"    expected: {expected_ids}")
                 print(f"    actual: {actual_ids}")
                 return
+
+            if "source_index" in ds.features:
+                expected_source_indices = list(range(num_check_samples))
+                actual_source_indices = [ds[i]["source_index"] for i in range(num_check_samples)]
+                if expected_source_indices == actual_source_indices:
+                    print(f"  ✓ source_index 字段正确!")
+                else:
+                    print(
+                        f"  [WARNING] source_index 不匹配: expected={expected_source_indices}, actual={actual_source_indices}")
 
         elif dataset_name == "OmniShape":
             expected_model_ids = [bytes_to_str(f["model_id"][i]) for i in range(num_check_samples)]
